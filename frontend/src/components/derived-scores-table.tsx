@@ -1,14 +1,14 @@
-import {
-  formatBlankSize,
-  formatDualDimension,
-  type UnitSystem,
-} from "@/lib/imperial";
+import { formatDecimalInches, formatFractionInches, type UnitSystem } from "@/lib/imperial";
 
 type DerivedValues = Record<string, string | number | boolean | null>;
 
 interface DerivedRow {
   label: string;
-  value: string;
+  formula?: string;
+  fraction: string;
+  decimal: string;
+  /** Blank size etc: a compound W×H value that doesn't split into fraction/decimal columns. */
+  wide?: boolean;
 }
 
 function getDerivedNumber(derived: DerivedValues, key: string): number | null {
@@ -35,57 +35,40 @@ function getFlapDepth(derived: DerivedValues): number | null {
   return Math.max(top, bottom);
 }
 
+function fmtFraction(value: number, units: UnitSystem): string {
+  if (units === "mm") return "—";
+  return `${formatFractionInches(value, 32)}"`;
+}
+
+function fmtDecimal(value: number, units: UnitSystem): string {
+  if (units === "mm") return `${Number(value.toFixed(1))} mm`;
+  return `${formatDecimalInches(value, 3)}"`;
+}
+
 function buildDerivedRows(derived: DerivedValues): DerivedRow[] {
   const units = getUnitSystem(derived);
   const rows: DerivedRow[] = [];
 
-  const panelL = getDerivedNumber(derived, "panel_L");
-  if (panelL !== null) {
-    rows.push({
-      label: "Length panel",
-      value: formatDualDimension(panelL, units),
-    });
-  }
+  const push = (label: string, value: number | null, formula?: string) => {
+    if (value === null || !(value > 0)) return;
+    rows.push({ label, formula, fraction: fmtFraction(value, units), decimal: fmtDecimal(value, units) });
+  };
 
-  const panelW = getDerivedNumber(derived, "panel_W");
-  if (panelW !== null) {
-    rows.push({
-      label: "Width panel",
-      value: formatDualDimension(panelW, units),
-    });
-  }
-
-  const depthScore = getDerivedNumber(derived, "depth_score");
-  if (depthScore !== null) {
-    rows.push({
-      label: "Depth score",
-      value: formatDualDimension(depthScore, units),
-    });
-  }
-
-  const flapDepth = getFlapDepth(derived);
-  if (flapDepth !== null && flapDepth > 0) {
-    rows.push({
-      label: "Flap depth",
-      value: formatDualDimension(flapDepth, units),
-    });
-  }
-
-  const slotWidth = getDerivedNumber(derived, "slot_width");
-  if (slotWidth !== null) {
-    rows.push({
-      label: "Slot width",
-      value: formatDualDimension(slotWidth, units),
-    });
-  }
+  push("Length panel", getDerivedNumber(derived, "panel_L"), "L + t");
+  push("Width panel", getDerivedNumber(derived, "panel_W"), "W + t");
+  push("Depth score", getDerivedNumber(derived, "depth_score"), "H + t");
+  push("Flap depth", getFlapDepth(derived));
+  push("Glue tab", getDerivedNumber(derived, "glue_tab"));
+  push("Slot width", getDerivedNumber(derived, "slot_width"));
 
   const blankW = getDerivedNumber(derived, "blank_w");
   const blankH = getDerivedNumber(derived, "blank_h");
   if (blankW !== null && blankH !== null) {
-    rows.push({
-      label: "Blank size",
-      value: formatBlankSize(blankW, blankH, units),
-    });
+    const blankLabel =
+      units === "mm"
+        ? `${Number(blankW.toFixed(1))} × ${Number(blankH.toFixed(1))} mm`
+        : `${formatFractionInches(blankW, 32)}" × ${formatFractionInches(blankH, 32)}"`;
+    rows.push({ label: "Blank size", fraction: blankLabel, decimal: "", wide: true });
   }
 
   return rows;
@@ -103,27 +86,59 @@ export function DerivedScoresTable({ derived }: DerivedScoresTableProps) {
     <div className="overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm">
       <div className="border-b bg-muted/30 px-4 py-3">
         <h3 className="text-sm font-medium">Derived Scores</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Panel sizes account for board caliper (t) — inside dimension + caliper.
+        </p>
       </div>
 
       <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <th className="px-4 py-2 text-left font-medium">Score</th>
+            <th className="px-4 py-2 text-right font-medium">Fraction</th>
+            <th className="px-4 py-2 text-right font-medium">Decimal</th>
+          </tr>
+        </thead>
         <tbody>
           {rows.map((row, index) => (
             <tr
               key={row.label}
               className={index < rows.length - 1 ? "border-b border-border/60" : undefined}
             >
-              <td className="px-4 py-2.5 text-muted-foreground">{row.label}</td>
-              <td className="px-4 py-2.5 text-right font-mono text-[13px] tabular-nums tracking-tight text-foreground">
-                {row.value}
+              <td className="px-4 py-2.5 text-muted-foreground">
+                {row.label}
+                {row.formula ? (
+                  <span className="ml-1.5 font-mono text-[11px] text-muted-foreground/70">
+                    = {row.formula}
+                  </span>
+                ) : null}
               </td>
+              {row.wide ? (
+                <td
+                  colSpan={2}
+                  className="px-4 py-2.5 text-right font-mono text-[13px] tabular-nums tracking-tight text-foreground"
+                >
+                  {row.fraction}
+                </td>
+              ) : (
+                <>
+                  <td className="px-4 py-2.5 text-right font-mono text-[13px] tabular-nums tracking-tight text-foreground">
+                    {row.fraction}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono text-[13px] tabular-nums tracking-tight text-muted-foreground">
+                    {row.decimal}
+                  </td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
 
       <p className="border-t bg-muted/20 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        Scoring model: panels = inside dim + caliper; depth score = height + caliper;
-        flap depth follows the active FEFCO style from width + caliper.
+        Scoring model: panels = inside dim + caliper (t); depth score = height + caliper;
+        flap depth follows the active FEFCO style from width + caliper. Verify against your
+        plant&apos;s flute allowance chart before cutting a die.
       </p>
     </div>
   );

@@ -40,8 +40,37 @@ class BoxSpec(BaseModel):
     )
 
 
+class LabelMarkPayload(BaseModel):
+    """A dimension callout position, in drawing units (unpadded)."""
+
+    x: float
+    y: float
+    kind: Literal["panel", "tab", "flap", "glue"]
+    value: float | None = None
+    letter: str | None = None
+    panel_index: int | None = None
+    small: bool = False
+    faint: bool = False
+
+
+class GeometryPayload(BaseModel):
+    """Raw dieline geometry for the live preview to render natively.
+
+    Distinct from `svg`, which is the physically-sized, print-ready file
+    used for the SVG download button.
+    """
+
+    unit: Units
+    total_w: float
+    total_h: float
+    cuts: list[tuple[float, float, float, float]]
+    creases: list[tuple[float, float, float, float]]
+    labels: list[LabelMarkPayload]
+
+
 class DielineGenerateResponse(BaseModel):
     svg: str
+    geometry: GeometryPayload | None = None
     fefco_code: str
     generated: bool
     message: str | None = None

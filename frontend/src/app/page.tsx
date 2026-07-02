@@ -32,6 +32,7 @@ import {
   parseImperialInput,
   type DimensionFormat,
 } from "@/lib/imperial";
+import { DielinePreview } from "@/components/dieline-preview";
 import { DerivedScoresTable } from "@/components/derived-scores-table";
 import {
   DEFAULT_BOX_SPEC,
@@ -40,6 +41,7 @@ import {
   isFefcoStyleAvailable,
   type BoxSpec,
 } from "@/types/box";
+import type { DielineGeometry } from "@/types/geometry";
 
 type NumericField = keyof Pick<BoxSpec, "length" | "width" | "height" | "caliper">;
 
@@ -72,12 +74,16 @@ export default function HomePage() {
     buildInputValues(DEFAULT_BOX_SPEC, "decimal"),
   );
   const [svgMarkup, setSvgMarkup] = useState("");
+  const [geometry, setGeometry] = useState<DielineGeometry | null>(null);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [derived, setDerived] = useState<Record<string, string | number | boolean | null>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isExportingDxf, setIsExportingDxf] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCuts, setShowCuts] = useState(true);
+  const [showCreases, setShowCreases] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
 
   const styleIsAvailable = isFefcoStyleAvailable(spec.style);
 
@@ -97,12 +103,14 @@ export default function HomePage() {
         if (controller.signal.aborted) return;
 
         setSvgMarkup(result.svg);
+        setGeometry(result.geometry ?? null);
         setPreviewMessage(result.message);
         setWarnings(result.warnings ?? []);
         setDerived(result.derived ?? {});
       } catch (loadError) {
         if (controller.signal.aborted) return;
         setSvgMarkup("");
+        setGeometry(null);
         setPreviewMessage(null);
         setWarnings([]);
         setDerived({});
@@ -280,22 +288,57 @@ export default function HomePage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-4">
-              <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-lg border bg-white p-3 sm:min-h-[420px] lg:min-h-[520px]">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Layers
+                </span>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input accent-primary"
+                    checked={showCuts}
+                    onChange={(event) => setShowCuts(event.target.checked)}
+                  />
+                  Cuts
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input accent-primary"
+                    checked={showCreases}
+                    onChange={(event) => setShowCreases(event.target.checked)}
+                  />
+                  Creases
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input accent-primary"
+                    checked={showLabels}
+                    onChange={(event) => setShowLabels(event.target.checked)}
+                  />
+                  Labels
+                </label>
+              </div>
+
+              <div className="relative min-h-[320px] flex-1 sm:min-h-[420px] lg:min-h-[520px]">
                 {isLoading ? (
-                  <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-lg border bg-white text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
                     Generating dieline…
                   </div>
                 ) : null}
                 {!isLoading && error ? (
-                  <div className="flex h-full items-center justify-center px-6 text-center text-sm text-destructive">
+                  <div className="flex h-full items-center justify-center rounded-lg border bg-white px-6 text-center text-sm text-destructive">
                     {error}
                   </div>
                 ) : null}
-                {!isLoading && !error && svgMarkup ? (
-                  <div
-                    className="h-full w-full [&>svg]:h-full [&>svg]:w-full"
-                    dangerouslySetInnerHTML={{ __html: svgMarkup }}
+                {!isLoading && !error ? (
+                  <DielinePreview
+                    geometry={geometry}
+                    showCuts={showCuts}
+                    showCreases={showCreases}
+                    showLabels={showLabels}
                   />
                 ) : null}
               </div>

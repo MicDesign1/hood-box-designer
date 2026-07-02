@@ -1,7 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from app.models.box_spec import BoxSpec, DielineGenerateResponse
+from app.models.box_spec import (
+    BoxSpec,
+    DielineGenerateResponse,
+    GeometryPayload,
+    LabelMarkPayload,
+)
 from app.services.dieline_generator import generate_dieline_dxf, generate_dieline_svg
 
 router = APIRouter(prefix="/api/dieline", tags=["dieline"])
@@ -9,9 +14,34 @@ router = APIRouter(prefix="/api/dieline", tags=["dieline"])
 
 @router.post("/generate", response_model=DielineGenerateResponse)
 def generate_dieline(spec: BoxSpec) -> DielineGenerateResponse:
-    svg, generated, message, warnings, derived = generate_dieline_svg(spec)
+    svg, generated, message, warnings, derived, result = generate_dieline_svg(spec)
+
+    geometry = None
+    if result is not None:
+        geometry = GeometryPayload(
+            unit=result.unit,
+            total_w=result.total_w,
+            total_h=result.total_h,
+            cuts=[(s.x1, s.y1, s.x2, s.y2) for s in result.cuts],
+            creases=[(s.x1, s.y1, s.x2, s.y2) for s in result.creases],
+            labels=[
+                LabelMarkPayload(
+                    x=label.x,
+                    y=label.y,
+                    kind=label.kind,
+                    value=label.value,
+                    letter=label.letter,
+                    panel_index=label.panel_index,
+                    small=label.small,
+                    faint=label.faint,
+                )
+                for label in result.labels
+            ],
+        )
+
     return DielineGenerateResponse(
         svg=svg,
+        geometry=geometry,
         fefco_code=spec.fefco_code,
         generated=generated,
         message=message,

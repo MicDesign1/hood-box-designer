@@ -3,7 +3,7 @@ pid: 24380
 cwd: "E:\hood-box-designer\frontend"
 command: "npm run dev"
 started_at: 2026-07-02T19:44:39.829Z
-running_for_ms: 4045010  
+running_for_ms: 6455003  
 ---
 ⨯ ./src/app/page.tsx:23:1
 Export downloadDielineSvg doesn't exist in target module

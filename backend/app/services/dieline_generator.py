@@ -4,7 +4,7 @@ import io
 import math
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import ezdxf
 import svgwrite
@@ -21,7 +21,6 @@ UNITS: dict[str, dict[str, float | str]] = {
         "folClear": 0.125,
         "chamferMax": 0.5,
         "hookMax": 0.5,
-        "round": 3.0,
     },
     "mm": {
         "label": "mm",
@@ -29,29 +28,34 @@ UNITS: dict[str, dict[str, float | str]] = {
         "folClear": 3.0,
         "chamferMax": 12.0,
         "hookMax": 12.0,
-        "round": 1.0,
     },
 }
 
-HAIRLINE_CSS = """
-.dieline-cut {
+STROKE_WIDTH_IN = 0.007  # ~0.5 pt at 72 dpi
+
+HAIRLINE_CSS = f"""
+.dieline-cut {{
   fill: none;
   stroke: #dc2626;
-  stroke-width: 0.75;
-  vector-effect: non-scaling-stroke;
+  stroke-width: {STROKE_WIDTH_IN};
   shape-rendering: geometricPrecision;
-}
-.dieline-crease {
+}}
+.dieline-crease {{
   fill: none;
   stroke: #16a34a;
-  stroke-width: 0.75;
-  vector-effect: non-scaling-stroke;
-  stroke-dasharray: 4 3;
+  stroke-width: {STROKE_WIDTH_IN};
+  stroke-dasharray: 0.06 0.04;
   shape-rendering: geometricPrecision;
-}
+}}
+.dieline-label-text {{
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 600;
+  fill: #1f2937;
+}}
 """
 
-SVG_PAD = 0.125
+SVG_PAD = 0.25
+SVG_PAD_LEFT = 0.5
 COORD_PRECISION = 8
 
 
@@ -64,24 +68,31 @@ class LineSegment:
 
 
 @dataclass
-class ArcSegment:
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    cx: float
-    cy: float
-    r: float
-    bulge: float
-    sweep: int = 1
+class LabelMark:
+    """A dimension callout anchored to a point on the dieline, in drawing units.
+
+    Numeric formatting (fractions vs decimals, in vs mm) is left to the
+    frontend so the same mark data can back both the preview and any future
+    export annotations.
+    """
+
+    x: float
+    y: float
+    kind: str  # "panel" | "tab" | "flap" | "glue"
+    value: float | None = None
+    letter: str | None = None
+    panel_index: int | None = None
+    small: bool = False
+    faint: bool = False
 
 
 @dataclass
 class DielineResult:
     ok: bool = False
     warnings: list[str] = field(default_factory=list)
-    cuts: list[LineSegment | ArcSegment] = field(default_factory=list)
+    cuts: list[LineSegment] = field(default_factory=list)
     creases: list[LineSegment] = field(default_factory=list)
+    labels: list[LabelMark] = field(default_factory=list)
     total_w: float = 0.0
     total_h: float = 0.0
     unit: str = "in"
@@ -117,18 +128,12 @@ def _unit_constants(unit: str) -> dict[str, float | str]:
     return UNITS.get(unit, UNITS["in"])
 
 
-def _fillet_radius(unit: str, caliper: float, slot: float) -> float:
-    unit_values = _unit_constants(unit)
-    base = float(unit_values["round"])
-    if unit == "mm":
-        radius = base
-    else:
-        radius = base / 64.0
-    return min(slot / 4.0, max(radius, caliper * 2.0))
+def _round_coord(value: float) -> float:
+    return round(value, COORD_PRECISION)
 
 
-def _add_line(
-    cuts: list[LineSegment | ArcSegment],
+def _seg(
+    cuts: list[LineSegment],
     x1: float,
     y1: float,
     x2: float,
@@ -139,131 +144,20 @@ def _add_line(
     cuts.append(LineSegment(x1, y1, x2, y2))
 
 
-def _round_coord(value: float) -> float:
-    return round(value, COORD_PRECISION)
-
-
-def _arc_bulge(x1: float, y1: float, x2: float, y2: float, cx: float, cy: float) -> float:
-    start_angle = math.atan2(y1 - cy, x1 - cx)
-    end_angle = math.atan2(y2 - cy, x2 - cx)
-    angle = end_angle - start_angle
-    while angle <= -math.pi:
-        angle += 2 * math.pi
-    while angle > math.pi:
-        angle -= 2 * math.pi
-    return math.tan(angle / 4.0)
-
-
-def _add_fillet(
-    cuts: list[LineSegment | ArcSegment],
-    corner_x: float,
-    corner_y: float,
-    from_x: float,
-    from_y: float,
-    to_x: float,
-    to_y: float,
-    radius: float,
-) -> tuple[float, float]:
-    """Connect from point -> filleted corner -> toward to point. Returns arc end."""
-    if radius <= 0:
-        _add_line(cuts, from_x, from_y, corner_x, corner_y)
-        return corner_x, corner_y
-
-    v1x, v1y = corner_x - from_x, corner_y - from_y
-    v2x, v2y = to_x - corner_x, to_y - corner_y
-    len1 = math.hypot(v1x, v1y)
-    len2 = math.hypot(v2x, v2y)
-    if len1 == 0 or len2 == 0:
-        _add_line(cuts, from_x, from_y, corner_x, corner_y)
-        return corner_x, corner_y
-
-    v1x, v1y = v1x / len1, v1y / len1
-    v2x, v2y = v2x / len2, v2y / len2
-    trim = min(radius, len1 * 0.45, len2 * 0.45)
-
-    start_x = _round_coord(corner_x - v1x * trim)
-    start_y = _round_coord(corner_y - v1y * trim)
-    end_x = _round_coord(corner_x + v2x * trim)
-    end_y = _round_coord(corner_y + v2y * trim)
-
-    theta = math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y)
-    half_angle = theta / 2.0
-    sin_half = math.sin(abs(half_angle))
-    if sin_half < 1e-9:
-        _add_line(cuts, from_x, from_y, start_x, start_y)
-        _add_line(cuts, start_x, start_y, end_x, end_y)
-        return end_x, end_y
-
-    bis_x = -v1x + v2x
-    bis_y = -v1y + v2y
-    bis_len = math.hypot(bis_x, bis_y)
-    bis_x, bis_y = bis_x / bis_len, bis_y / bis_len
-    center_dist = trim / sin_half
-    center_x = _round_coord(corner_x + bis_x * center_dist)
-    center_y = _round_coord(corner_y + bis_y * center_dist)
-    arc_radius = math.hypot(start_x - center_x, start_y - center_y)
-    bulge = _arc_bulge(start_x, start_y, end_x, end_y, center_x, center_y)
-
-    _add_line(cuts, from_x, from_y, start_x, start_y)
-    cuts.append(
-        ArcSegment(
-            x1=start_x,
-            y1=start_y,
-            x2=end_x,
-            y2=end_y,
-            cx=center_x,
-            cy=center_y,
-            r=_round_coord(arc_radius),
-            bulge=_round_coord(bulge),
-            sweep=1 if bulge > 0 else 0,
-        )
-    )
-    return end_x, end_y
-
-
-def _slot_top(
-    cuts: list[LineSegment | ArcSegment],
-    x: float,
-    boundary: float,
-    slot: float,
-    y_t: float,
-    radius: float,
-) -> float:
-    """Top-edge slot notch with filleted corners. Returns next x."""
-    half = slot / 2
-    left = boundary - half
-    right = boundary + half
-
-    end_x, end_y = _add_fillet(cuts, left, 0.0, x, 0.0, left, y_t, radius)
-    end_x, end_y = _add_fillet(cuts, left, y_t, end_x, end_y, right, y_t, radius)
-    end_x, end_y = _add_fillet(cuts, right, y_t, end_x, end_y, right, 0.0, radius)
-    _add_line(cuts, end_x, end_y, right, 0.0)
-    return right
-
-
-def _slot_bottom(
-    cuts: list[LineSegment | ArcSegment],
-    x: float,
-    boundary: float,
-    slot: float,
-    y_b: float,
-    total_h: float,
-    radius: float,
-) -> float:
-    """Bottom-edge slot notch with filleted corners. Returns next x."""
-    half = slot / 2
-    left = boundary - half
-    right = boundary + half
-
-    end_x, end_y = _add_fillet(cuts, right, total_h, x, total_h, right, y_b, radius)
-    end_x, end_y = _add_fillet(cuts, right, y_b, end_x, end_y, left, y_b, radius)
-    end_x, end_y = _add_fillet(cuts, left, y_b, end_x, end_y, left, total_h, radius)
-    _add_line(cuts, end_x, end_y, left, total_h)
-    return left
+def _cr(
+    creases: list[LineSegment],
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> None:
+    if math.isclose(x1, x2, abs_tol=1e-9) and math.isclose(y1, y2, abs_tol=1e-9):
+        return
+    creases.append(LineSegment(x1, y1, x2, y2))
 
 
 def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
-    """Faithful Python port of the reference buildDieline geometry engine."""
+    """Faithful Python port of the reference buildDieline (sharp slot corners)."""
     if isinstance(spec, BoxSpec):
         payload = spec.model_dump()
     else:
@@ -271,6 +165,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
 
     unit = payload.get("units", "in")
     unit_values = _unit_constants(unit)
+    fefco_code = payload.get("fefco_code", "0201")
 
     length = parse_dim(payload.get("length"))
     width = parse_dim(payload.get("width"))
@@ -279,7 +174,6 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     glue_tab = parse_dim(payload.get("glue_tab"))
     overlap = parse_dim(payload.get("overlap"))
     slot_in = parse_dim(payload.get("slot"))
-    fefco_code = payload.get("fefco_code", "0201")
 
     glue = glue_tab if math.isfinite(glue_tab) and glue_tab > 0 else (1.25 if unit == "in" else 32.0)
     overlap_val = overlap if math.isfinite(overlap) and overlap > 0 else (1.375 if unit == "in" else 35.0)
@@ -320,7 +214,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
 
     hook = min(float(unit_values["hookMax"]), panel_width * 0.15)
     major_depth = panel_width / 2 + hook
-    _minor_depth = panel_width / 2 - float(unit_values["folClear"])
+    minor_depth = panel_width / 2 - float(unit_values["folClear"])
     if is_crash_lock:
         flap_bottom = major_depth
 
@@ -335,52 +229,115 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     y_top = flap_top
     y_bottom = flap_top + body_height
     chamfer = min(float(unit_values["chamferMax"]), body_height / 4)
-    fillet_r = _fillet_radius(unit, caliper, slot)
+    half_slot = slot / 2
 
-    cuts: list[LineSegment | ArcSegment] = []
+    cuts: list[LineSegment] = []
     creases: list[LineSegment] = []
 
-    # Top edge + slots
+    # Top edge + sharp slot notches
     if flap_top > 0:
         cursor_x = x0
         for index in range(1, 4):
-            cursor_x = _slot_top(cuts, cursor_x, x_boundaries[index], slot, y_top, fillet_r)
-        _add_line(cuts, cursor_x, 0.0, x_right, 0.0)
+            boundary = x_boundaries[index]
+            _seg(cuts, cursor_x, 0.0, boundary - half_slot, 0.0)
+            _seg(cuts, boundary - half_slot, 0.0, boundary - half_slot, y_top)
+            _seg(cuts, boundary - half_slot, y_top, boundary + half_slot, y_top)
+            _seg(cuts, boundary + half_slot, y_top, boundary + half_slot, 0.0)
+            cursor_x = boundary + half_slot
+        _seg(cuts, cursor_x, 0.0, x_right, 0.0)
     else:
-        _add_line(cuts, x0, 0.0, x_right, 0.0)
+        _seg(cuts, x0, 0.0, x_right, 0.0)
 
     # Right edge
-    _add_line(cuts, x_right, 0.0, x_right, y_bottom if is_crash_lock else total_h)
+    _seg(cuts, x_right, 0.0, x_right, y_bottom if is_crash_lock else total_h)
 
-    # Bottom edge + slots
+    # Bottom edge + sharp slot notches
     if not is_crash_lock and flap_bottom > 0:
         cursor_x = x_right
         for index in range(3, 0, -1):
-            cursor_x = _slot_bottom(
-                cuts, cursor_x, x_boundaries[index], slot, y_bottom, total_h, fillet_r
-            )
-        _add_line(cuts, cursor_x, total_h, x0, total_h)
+            boundary = x_boundaries[index]
+            _seg(cuts, cursor_x, total_h, boundary + half_slot, total_h)
+            _seg(cuts, boundary + half_slot, total_h, boundary + half_slot, y_bottom)
+            _seg(cuts, boundary + half_slot, y_bottom, boundary - half_slot, y_bottom)
+            _seg(cuts, boundary - half_slot, y_bottom, boundary - half_slot, total_h)
+            cursor_x = boundary - half_slot
+        _seg(cuts, cursor_x, total_h, x0, total_h)
     elif not is_crash_lock:
-        _add_line(cuts, x_right, total_h, x0, total_h)
+        _seg(cuts, x_right, total_h, x0, total_h)
 
-    # Left edge + chamfer on glue tab
-    _add_line(cuts, x0, y_bottom if is_crash_lock else total_h, x0, y_bottom)
-    _add_line(cuts, x0, y_bottom, 0.0, y_bottom - chamfer)
-    _add_line(cuts, 0.0, y_bottom - chamfer, 0.0, y_top + chamfer)
-    _add_line(cuts, 0.0, y_top + chamfer, x0, y_top)
+    # Left edge + glue-tab chamfer
+    _seg(cuts, x0, y_bottom if is_crash_lock else total_h, x0, y_bottom)
+    _seg(cuts, x0, y_bottom, 0.0, y_bottom - chamfer)
+    _seg(cuts, 0.0, y_bottom - chamfer, 0.0, y_top + chamfer)
+    _seg(cuts, 0.0, y_top + chamfer, x0, y_top)
+    if flap_top > 0:
+        _seg(cuts, x0, y_top, x0, 0.0)
 
     # Creases
-    creases.append(LineSegment(x0, y_top, x0, y_bottom))
+    _cr(creases, x0, y_top, x0, y_bottom)
     for index in range(1, 4):
-        creases.append(LineSegment(x_boundaries[index], y_top, x_boundaries[index], y_bottom))
+        _cr(creases, x_boundaries[index], y_top, x_boundaries[index], y_bottom)
 
     for index in range(4):
-        left = x_boundaries[index] + (0.0 if index == 0 else slot / 2)
-        right = x_boundaries[index + 1] - (0.0 if index == 3 else slot / 2)
+        left = x_boundaries[index] + (0.0 if index == 0 else half_slot)
+        right = x_boundaries[index + 1] - (0.0 if index == 3 else half_slot)
         if flap_top > 0:
-            creases.append(LineSegment(left, y_top, right, y_top))
+            _cr(creases, left, y_top, right, y_top)
         if not is_crash_lock and flap_bottom > 0:
-            creases.append(LineSegment(left, y_bottom, right, y_bottom))
+            _cr(creases, left, y_bottom, right, y_bottom)
+
+    # Dimension callouts, ported 1:1 from the reference implementation's label
+    # placement (panel centers, glue tab, flap depth).
+    labels: list[LabelMark] = []
+    mid_y = y_top + body_height / 2
+    names = ["L", "W", "L", "W"]
+    panel_dims = [panel_length, panel_width, panel_length, panel_width]
+    for index in range(4):
+        center_x = (x_boundaries[index] + x_boundaries[index + 1]) / 2
+        labels.append(
+            LabelMark(
+                x=center_x,
+                y=mid_y,
+                kind="panel",
+                value=panel_dims[index],
+                letter=names[index],
+                panel_index=index + 1,
+            )
+        )
+    labels.append(LabelMark(x=glue / 2, y=mid_y, kind="tab", value=glue, small=True))
+    if not is_crash_lock and flap_bottom > 0:
+        flap_left = x_boundaries[0]
+        flap_right = x_boundaries[1]
+        labels.append(
+            LabelMark(
+                x=(flap_left + flap_right) / 2,
+                y=y_bottom + flap_bottom / 2,
+                kind="flap",
+                value=flap_bottom,
+                small=True,
+            )
+        )
+    elif is_crash_lock:
+        flap_left = x_boundaries[0]
+        flap_right = x_boundaries[1]
+        labels.append(
+            LabelMark(
+                x=(flap_left + flap_right) / 2,
+                y=y_bottom + major_depth / 2,
+                kind="flap",
+                value=major_depth,
+                small=True,
+            )
+        )
+        labels.append(
+            LabelMark(
+                x=flap_left + major_depth * 0.32,
+                y=y_bottom + major_depth * 0.72,
+                kind="glue",
+                small=True,
+                faint=True,
+            )
+        )
 
     derived = {
         "panel_L": panel_length,
@@ -389,9 +346,8 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
         "flap_top": flap_top,
         "flap_bottom": flap_bottom,
         "major_flap_depth": major_depth,
-        "minor_flap_depth": _minor_depth,
+        "minor_flap_depth": minor_depth,
         "slot_width": slot,
-        "slot_fillet_radius": fillet_r,
         "glue_tab": glue,
         "blank_w": x_right,
         "blank_h": total_h,
@@ -409,6 +365,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
         warnings=warnings,
         cuts=cuts,
         creases=creases,
+        labels=labels,
         total_w=x_right,
         total_h=total_h,
         unit=unit,
@@ -416,34 +373,127 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     )
 
 
-def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResult:
-    def shift_line(line: LineSegment) -> LineSegment:
-        return LineSegment(line.x1 + dx, line.y1 + dy, line.x2 + dx, line.y2 + dy)
+def _format_dim_label(value: float, unit: str) -> str:
+    if unit == "mm":
+        return f"{value:.1f} mm"
+    rounded = round(value, 3)
+    text = f"{rounded:.3f}".rstrip("0").rstrip(".")
+    return f'{text}"'
 
-    def shift_arc(arc: ArcSegment) -> ArcSegment:
-        return ArcSegment(
-            cx=arc.cx + dx,
-            cy=arc.cy + dy,
-            r=arc.r,
-            x1=arc.x1 + dx,
-            y1=arc.y1 + dy,
-            x2=arc.x2 + dx,
-            y2=arc.y2 + dy,
-            sweep=arc.sweep,
+
+def _add_dimension_label(
+    drawing: svgwrite.Drawing,
+    group: svgwrite.container.Group,
+    x: float,
+    y: float,
+    lines: list[str],
+    *,
+    font_size: float = 0.26,
+) -> None:
+    line_height = font_size * 1.25
+    max_len = max(len(line) for line in lines)
+    box_w = max(font_size * 1.35, max_len * font_size * 0.58)
+    box_h = len(lines) * line_height + font_size * 0.35
+    box_x = x - box_w / 2
+    box_y = y - box_h / 2
+
+    label = group.add(drawing.g(class_="dieline-label"))
+    label.add(
+        drawing.rect(
+            insert=(box_x, box_y),
+            size=(box_w, box_h),
+            rx=font_size * 0.15,
+            ry=font_size * 0.15,
+            fill="#ffffff",
+            fill_opacity=0.92,
+            stroke="#d1d5db",
+            stroke_width=STROKE_WIDTH_IN * 0.6,
         )
+    )
 
-    shifted_cuts: list[LineSegment | ArcSegment] = []
-    for primitive in result.cuts:
-        if isinstance(primitive, LineSegment):
-            shifted_cuts.append(shift_line(primitive))
-        else:
-            shifted_cuts.append(shift_arc(primitive))
+    text_el = label.add(
+        drawing.text(
+            "",
+            insert=(x, box_y + font_size * 0.95),
+            text_anchor="middle",
+            class_="dieline-label-text",
+        )
+    )
+    for index, line in enumerate(lines):
+        tspan = drawing.tspan(line)
+        tspan.attribs["font-size"] = str(font_size)
+        tspan.attribs["x"] = str(x)
+        if index > 0:
+            tspan.attribs["dy"] = str(line_height)
+        text_el.add(tspan)
+
+
+def _build_dimension_labels(
+    drawing: svgwrite.Drawing,
+    group: svgwrite.container.Group,
+    padded: DielineResult,
+) -> None:
+    """Render the padded result's label marks (already shifted into SVG space)."""
+    unit = padded.unit
+    for mark in padded.labels:
+        if mark.kind == "panel":
+            _add_dimension_label(
+                drawing,
+                group,
+                mark.x,
+                mark.y,
+                [mark.letter or "", _format_dim_label(mark.value or 0.0, unit)],
+                font_size=0.5,
+            )
+        elif mark.kind == "tab":
+            _add_dimension_label(
+                drawing,
+                group,
+                mark.x,
+                mark.y,
+                ["TAB", _format_dim_label(mark.value or 0.0, unit)],
+                font_size=0.35,
+            )
+        elif mark.kind == "flap":
+            _add_dimension_label(
+                drawing,
+                group,
+                mark.x,
+                mark.y,
+                [_format_dim_label(mark.value or 0.0, unit)],
+                font_size=0.32,
+            )
+        elif mark.kind == "glue":
+            _add_dimension_label(drawing, group, mark.x, mark.y, ["GLUE"], font_size=0.28)
+
+
+def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResult:
+    def shift(segment: LineSegment) -> LineSegment:
+        return LineSegment(
+            segment.x1 + dx,
+            segment.y1 + dy,
+            segment.x2 + dx,
+            segment.y2 + dy,
+        )
 
     return DielineResult(
         ok=result.ok,
         warnings=result.warnings,
-        cuts=shifted_cuts,
-        creases=[shift_line(line) for line in result.creases],
+        cuts=[shift(segment) for segment in result.cuts],
+        creases=[shift(segment) for segment in result.creases],
+        labels=[
+            LabelMark(
+                x=label.x + dx,
+                y=label.y + dy,
+                kind=label.kind,
+                value=label.value,
+                letter=label.letter,
+                panel_index=label.panel_index,
+                small=label.small,
+                faint=label.faint,
+            )
+            for label in result.labels
+        ],
         total_w=result.total_w + dx,
         total_h=result.total_h + dy,
         unit=result.unit,
@@ -451,19 +501,30 @@ def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResul
     )
 
 
-def _geometry_to_svg(result: DielineResult) -> str:
-    padded = _shift_geometry(result, SVG_PAD, SVG_PAD)
+def build_svg(result: DielineResult) -> str:
+    """Layered SVG with physical inch sizing, labels, and margin padding."""
+    padded = _shift_geometry(result, SVG_PAD_LEFT, SVG_PAD)
     view_w = padded.total_w + SVG_PAD
     view_h = padded.total_h + SVG_PAD
+    width_pt = view_w * 72
+    height_pt = view_h * 72
 
     drawing = svgwrite.Drawing(
-        size=("100%", "100%"),
+        size=(f"{width_pt}pt", f"{height_pt}pt"),
         viewBox=f"0 0 {view_w} {view_h}",
         profile="full",
     )
+    drawing.attribs["overflow"] = "visible"
+
     defs = drawing.defs
     defs.add(drawing.style(HAIRLINE_CSS))
-    drawing.add(drawing.rect(insert=(0, 0), size=("100%", "100%"), fill="#fafafa"))
+    drawing.add(
+        drawing.rect(
+            insert=(0, 0),
+            size=(view_w, view_h),
+            fill="#fafafa",
+        )
+    )
 
     crease_group = drawing.g(id="crease-lines")
     for segment in padded.creases:
@@ -477,32 +538,19 @@ def _geometry_to_svg(result: DielineResult) -> str:
     drawing.add(crease_group)
 
     cut_group = drawing.g(id="cut-lines")
-    for primitive in padded.cuts:
-        if isinstance(primitive, LineSegment):
-            cut_group.add(
-                drawing.line(
-                    start=(primitive.x1, primitive.y1),
-                    end=(primitive.x2, primitive.y2),
-                    class_="dieline-cut",
-                )
+    for segment in padded.cuts:
+        cut_group.add(
+            drawing.line(
+                start=(segment.x1, segment.y1),
+                end=(segment.x2, segment.y2),
+                class_="dieline-cut",
             )
-        else:
-            start_angle = math.atan2(primitive.y1 - primitive.cy, primitive.x1 - primitive.cx)
-            end_angle = math.atan2(primitive.y2 - primitive.cy, primitive.x2 - primitive.cx)
-            angle = end_angle - start_angle
-            while angle <= -math.pi:
-                angle += 2 * math.pi
-            while angle > math.pi:
-                angle -= 2 * math.pi
-            large_arc = 1 if abs(angle) > math.pi else 0
-            sweep = 1 if angle > 0 else 0
-            path_data = (
-                f"M {primitive.x1} {primitive.y1} "
-                f"A {primitive.r} {primitive.r} 0 {large_arc} {sweep} "
-                f"{primitive.x2} {primitive.y2}"
-            )
-            cut_group.add(drawing.path(d=path_data, class_="dieline-cut"))
+        )
     drawing.add(cut_group)
+
+    label_group = drawing.g(id="dimension-labels")
+    _build_dimension_labels(drawing, label_group, padded)
+    drawing.add(label_group)
 
     return drawing.tostring()
 
@@ -533,7 +581,14 @@ def _coming_soon_svg(spec: BoxSpec) -> str:
     return drawing.tostring()
 
 
-def generate_dieline_svg(spec: BoxSpec) -> tuple[str, bool, str | None, list[str], dict[str, Any]]:
+def generate_dieline_svg(
+    spec: BoxSpec,
+) -> tuple[str, bool, str | None, list[str], dict[str, Any], DielineResult | None]:
+    """Returns (svg, generated, message, warnings, derived, geometry).
+
+    `geometry` is the un-padded DielineResult used to drive the live preview;
+    it is None when the style isn't implemented or the inputs don't resolve.
+    """
     if spec.fefco_code not in IMPLEMENTED_FEFCO_CODES:
         return (
             _coming_soon_svg(spec),
@@ -541,6 +596,7 @@ def generate_dieline_svg(spec: BoxSpec) -> tuple[str, bool, str | None, list[str
             f"FEFCO {spec.fefco_code} is not implemented yet.",
             [],
             {},
+            None,
         )
 
     result = build_dieline(spec)
@@ -551,89 +607,16 @@ def generate_dieline_svg(spec: BoxSpec) -> tuple[str, bool, str | None, list[str
             "Unable to generate dieline from the provided dimensions.",
             result.warnings,
             result.derived,
+            None,
         )
 
     return (
-        _geometry_to_svg(result),
+        build_svg(result),
         True,
         None,
         result.warnings,
         result.derived,
-    )
-
-
-def _points_close(x1: float, y1: float, x2: float, y2: float, tol: float = 1e-6) -> bool:
-    return math.isclose(x1, x2, abs_tol=tol) and math.isclose(y1, y2, abs_tol=tol)
-
-
-def _chain_cut_paths(
-    cuts: list[LineSegment | ArcSegment],
-) -> list[list[LineSegment | ArcSegment]]:
-    """Group ordered cut primitives into connected paths for LWPolyline export."""
-    if not cuts:
-        return []
-
-    paths: list[list[LineSegment | ArcSegment]] = [[cuts[0]]]
-    current_end = (cuts[0].x2, cuts[0].y2) if isinstance(cuts[0], LineSegment) else (cuts[0].x2, cuts[0].y2)
-
-    for primitive in cuts[1:]:
-        start = (primitive.x1, primitive.y1)
-        if _points_close(current_end[0], current_end[1], start[0], start[1]):
-            paths[-1].append(primitive)
-        else:
-            paths.append([primitive])
-        current_end = (primitive.x2, primitive.y2)
-
-    return paths
-
-
-def _export_cut_lwpolyline(
-    msp,
-    path: list[LineSegment | ArcSegment],
-    layer: str,
-) -> None:
-    """Export a connected cut path as a single LWPolyline with bulge fillets."""
-    if not path:
-        return
-
-    first = path[0]
-    points: list[tuple[float, float, float, float, float]] = [
-        (_round_coord(first.x1), _round_coord(first.y1), 0.0, 0.0, 0.0)
-    ]
-
-    for primitive in path:
-        if isinstance(primitive, LineSegment):
-            points.append(
-                (
-                    _round_coord(primitive.x2),
-                    _round_coord(primitive.y2),
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-            )
-        else:
-            points[-1] = (
-                points[-1][0],
-                points[-1][1],
-                0.0,
-                0.0,
-                _round_coord(primitive.bulge),
-            )
-            points.append(
-                (
-                    _round_coord(primitive.x2),
-                    _round_coord(primitive.y2),
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-            )
-
-    msp.add_lwpolyline(
-        points,
-        format="xyseb",
-        dxfattribs={"layer": layer, "closed": False},
+        result,
     )
 
 
@@ -643,14 +626,8 @@ def _configure_dxf_units(doc: DxfDrawing, unit: str) -> None:
     doc.header["$INSUNITS"] = 1 if unit == "in" else 4
 
 
-def generate_dieline_dxf(spec: BoxSpec) -> tuple[bytes | None, str | None]:
-    if spec.fefco_code not in IMPLEMENTED_FEFCO_CODES:
-        return None, f"DXF export is not available for FEFCO {spec.fefco_code} yet."
-
-    result = build_dieline(spec)
-    if not result.ok or not result.cuts:
-        return None, "Unable to build DXF geometry."
-
+def build_dxf(result: DielineResult) -> bytes:
+    """Port of reference buildDXF — simple LINE entities, no display padding."""
     doc: DxfDrawing = ezdxf.new("R2010")
     _configure_dxf_units(doc, result.unit)
     doc.layers.add("CUT", color=1)
@@ -664,22 +641,31 @@ def generate_dieline_dxf(spec: BoxSpec) -> tuple[bytes | None, str | None]:
 
     msp = doc.modelspace()
 
-    for path in _chain_cut_paths(result.cuts):
-        _export_cut_lwpolyline(msp, path, "CUT")
+    for segment in result.cuts:
+        msp.add_line(
+            (_round_coord(segment.x1), _round_coord(segment.y1)),
+            (_round_coord(segment.x2), _round_coord(segment.y2)),
+            dxfattribs={"layer": "CUT"},
+        )
 
     for segment in result.creases:
         msp.add_line(
-            (
-                _round_coord(segment.x1),
-                _round_coord(segment.y1),
-            ),
-            (
-                _round_coord(segment.x2),
-                _round_coord(segment.y2),
-            ),
+            (_round_coord(segment.x1), _round_coord(segment.y1)),
+            (_round_coord(segment.x2), _round_coord(segment.y2)),
             dxfattribs={"layer": "CREASE", "linetype": "DASHED"},
         )
 
     buffer = io.StringIO()
     doc.write(buffer)
-    return buffer.getvalue().encode("utf-8"), None
+    return buffer.getvalue().encode("utf-8")
+
+
+def generate_dieline_dxf(spec: BoxSpec) -> tuple[bytes | None, str | None]:
+    if spec.fefco_code not in IMPLEMENTED_FEFCO_CODES:
+        return None, f"DXF export is not available for FEFCO {spec.fefco_code} yet."
+
+    result = build_dieline(spec)
+    if not result.ok or not result.cuts:
+        return None, "Unable to build DXF geometry."
+
+    return build_dxf(result), None

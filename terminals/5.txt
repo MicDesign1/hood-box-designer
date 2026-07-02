@@ -3,7 +3,7 @@ pid: 27828
 cwd: "E:\hood-box-designer\frontend"
 command: "npm run dev"
 started_at: 2026-07-02T19:15:35.330Z
-running_for_ms: 5790002  
+running_for_ms: 8195007  
 ---
 [browser] Image with src "http://localhost:3000/vercel.svg" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio.
 [browser] Image with src "http://localhost:3000/vercel.svg" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio.
