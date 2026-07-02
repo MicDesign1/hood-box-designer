@@ -73,6 +73,7 @@ export default function HomePage() {
   const [inputValues, setInputValues] = useState<Record<NumericField, string>>(() =>
     buildInputValues(DEFAULT_BOX_SPEC, "decimal"),
   );
+  const [filletRadiusInput, setFilletRadiusInput] = useState("");
   const [svgMarkup, setSvgMarkup] = useState("");
   const [geometry, setGeometry] = useState<DielineGeometry | null>(null);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
@@ -141,6 +142,20 @@ export default function HomePage() {
     if (!fieldConfig || parsed < fieldConfig.min) return;
 
     setSpec((current) => ({ ...current, [field]: parsed }));
+  }
+
+  function updateFilletRadius(rawValue: string) {
+    setFilletRadiusInput(rawValue);
+
+    if (rawValue.trim() === "") {
+      setSpec((current) => ({ ...current, filletRadius: undefined }));
+      return;
+    }
+
+    const parsed = parseImperialInput(rawValue);
+    if (parsed === null || parsed < 0) return;
+
+    setSpec((current) => ({ ...current, filletRadius: parsed }));
   }
 
   async function handleDownloadDxf() {
@@ -274,6 +289,22 @@ export default function HomePage() {
                 <span className="font-mono">3/8</span>
               </p>
             ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="fillet-radius">Fillet radius (in)</Label>
+              <Input
+                id="fillet-radius"
+                type="text"
+                inputMode="decimal"
+                placeholder="auto"
+                value={filletRadiusInput}
+                onChange={(event) => updateFilletRadius(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Rounds the slot-root corners where flaps meet the crease. Leave blank for an
+                automatic radius (0.75× caliper, min 0.125&quot;); enter 0 for sharp corners.
+              </p>
+            </div>
           </CardContent>
         </Card>
 

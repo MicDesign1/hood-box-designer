@@ -5,7 +5,7 @@ import { Maximize2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatFractionInches } from "@/lib/imperial";
-import type { DielineGeometry, LabelMark, LineSegment } from "@/types/geometry";
+import type { CutElement, DielineGeometry, LabelMark, LineSegment } from "@/types/geometry";
 
 export interface DielinePreviewProps {
   geometry: DielineGeometry | null;
@@ -27,6 +27,17 @@ const FIT_MARGIN_RATIO = 0.05;
 
 function segsToPath(segments: LineSegment[]): string {
   return segments.map(([x1, y1, x2, y2]) => `M ${x1} ${y1} L ${x2} ${y2}`).join(" ");
+}
+
+/** Cuts mix straight segments and quarter-circle slot-root fillets in one path string. */
+function cutsToPath(elements: CutElement[]): string {
+  return elements
+    .map((el) =>
+      el.kind === "arc"
+        ? `M ${el.x1} ${el.y1} A ${el.radius} ${el.radius} 0 0 ${el.sweep_flag} ${el.x2} ${el.y2}`
+        : `M ${el.x1} ${el.y1} L ${el.x2} ${el.y2}`,
+    )
+    .join(" ");
 }
 
 function fmtDim(value: number, unit: "in" | "mm"): string {
@@ -222,7 +233,7 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
         )}
         {showCuts && (
           <path
-            d={segsToPath(geometry.cuts)}
+            d={cutsToPath(geometry.cuts)}
             fill="none"
             stroke="#dc2626"
             strokeWidth={strokeW * 2.2}

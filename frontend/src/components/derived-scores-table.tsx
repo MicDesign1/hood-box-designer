@@ -60,6 +60,7 @@ function buildDerivedRows(derived: DerivedValues): DerivedRow[] {
   push("Flap depth", getFlapDepth(derived));
   push("Glue tab", getDerivedNumber(derived, "glue_tab"));
   push("Slot width", getDerivedNumber(derived, "slot_width"));
+  push("Fillet radius", getDerivedNumber(derived, "fillet_radius"));
 
   const blankW = getDerivedNumber(derived, "blank_w");
   const blankH = getDerivedNumber(derived, "blank_h");

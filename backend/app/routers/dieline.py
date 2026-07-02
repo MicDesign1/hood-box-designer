@@ -3,13 +3,22 @@ from fastapi.responses import Response
 
 from app.models.box_spec import (
     BoxSpec,
+    CutArc,
+    CutElement,
+    CutLine,
     DielineGenerateResponse,
     GeometryPayload,
     LabelMarkPayload,
 )
-from app.services.dieline_generator import generate_dieline_dxf, generate_dieline_svg
+from app.services.dieline_generator import ArcSegment, generate_dieline_dxf, generate_dieline_svg
 
 router = APIRouter(prefix="/api/dieline", tags=["dieline"])
+
+
+def _cut_payload(segment) -> CutElement:
+    if isinstance(segment, ArcSegment):
+        return CutArc(x1=segment.x1, y1=segment.y1, x2=segment.x2, y2=segment.y2, radius=segment.radius, sweep_flag=segment.sweep_flag)
+    return CutLine(x1=segment.x1, y1=segment.y1, x2=segment.x2, y2=segment.y2)
 
 
 @router.post("/generate", response_model=DielineGenerateResponse)
@@ -22,7 +31,7 @@ def generate_dieline(spec: BoxSpec) -> DielineGenerateResponse:
             unit=result.unit,
             total_w=result.total_w,
             total_h=result.total_h,
-            cuts=[(s.x1, s.y1, s.x2, s.y2) for s in result.cuts],
+            cuts=[_cut_payload(s) for s in result.cuts],
             creases=[(s.x1, s.y1, s.x2, s.y2) for s in result.creases],
             labels=[
                 LabelMarkPayload(

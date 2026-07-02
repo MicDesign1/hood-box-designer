@@ -34,6 +34,8 @@ export interface BoxSpec {
   width: number;
   height: number;
   caliper: number;
+  /** Slot-root fillet radius override, in inches. Omit for the backend's automatic radius. */
+  filletRadius?: number;
 }
 
 export const DEFAULT_BOX_SPEC: BoxSpec = {

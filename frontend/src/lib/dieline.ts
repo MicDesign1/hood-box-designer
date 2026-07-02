@@ -21,6 +21,7 @@ export interface BoxSpecPayload {
   height: number;
   caliper: number;
   units: "in";
+  fillet_radius?: number;
 }
 
 export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
@@ -31,6 +32,7 @@ export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
     height: spec.height,
     caliper: spec.caliper,
     units: "in",
+    ...(spec.filletRadius !== undefined ? { fillet_radius: spec.filletRadius } : {}),
   };
 }
 

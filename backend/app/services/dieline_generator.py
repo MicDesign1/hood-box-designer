@@ -21,6 +21,7 @@ UNITS: dict[str, dict[str, float | str]] = {
         "folClear": 0.125,
         "chamferMax": 0.5,
         "hookMax": 0.5,
+        "filletMin": 0.125,
     },
     "mm": {
         "label": "mm",
@@ -28,8 +29,12 @@ UNITS: dict[str, dict[str, float | str]] = {
         "folClear": 3.0,
         "chamferMax": 12.0,
         "hookMax": 12.0,
+        "filletMin": 3.2,
     },
 }
+
+FILLET_CLAMP_MARGIN = 0.95
+FILLET_MIN_RADIUS = 1e-6
 
 STROKE_WIDTH_IN = 0.007  # ~0.5 pt at 72 dpi
 
@@ -47,11 +52,6 @@ HAIRLINE_CSS = f"""
   stroke-dasharray: 0.06 0.04;
   shape-rendering: geometricPrecision;
 }}
-.dieline-label-text {{
-  font-family: Arial, Helvetica, sans-serif;
-  font-weight: 600;
-  fill: #1f2937;
-}}
 """
 
 SVG_PAD = 0.25
@@ -65,6 +65,25 @@ class LineSegment:
     y1: float
     x2: float
     y2: float
+
+
+@dataclass
+class ArcSegment:
+    """A quarter-circle fillet replacing a sharp 90° corner between two
+    axis-aligned segments. (x1,y1)/(x2,y2) are the trim points on each of
+    the two adjacent lines; `sweep_flag` is the SVG sweep-flag for the arc
+    drawn from (x1,y1) to (x2,y2), computed once here and reused by both
+    SVG and DXF export so they can't independently desync.
+    """
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    cx: float
+    cy: float
+    radius: float
+    sweep_flag: int
 
 
 @dataclass
@@ -90,7 +109,7 @@ class LabelMark:
 class DielineResult:
     ok: bool = False
     warnings: list[str] = field(default_factory=list)
-    cuts: list[LineSegment] = field(default_factory=list)
+    cuts: list[LineSegment | ArcSegment] = field(default_factory=list)
     creases: list[LineSegment] = field(default_factory=list)
     labels: list[LabelMark] = field(default_factory=list)
     total_w: float = 0.0
@@ -156,6 +175,37 @@ def _cr(
     creases.append(LineSegment(x1, y1, x2, y2))
 
 
+def _away(cx: float, cy: float, nx: float, ny: float) -> tuple[float, float]:
+    """Unit vector from corner (cx,cy) toward neighboring vertex (nx,ny)."""
+    dx, dy = nx - cx, ny - cy
+    length = math.hypot(dx, dy)
+    return (dx / length, dy / length)
+
+
+def _fillet(
+    cuts: list[LineSegment | ArcSegment],
+    corner: tuple[float, float],
+    dir_a: tuple[float, float],
+    dir_b: tuple[float, float],
+    radius: float,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Replaces a sharp 90° corner with a quarter-circle fillet.
+
+    Appends the ArcSegment and returns the two trim points (on line A and
+    line B respectively) so the caller can thread them verbatim into the
+    adjacent _seg() calls, guaranteeing bit-identical shared endpoints.
+    """
+    cx0, cy0 = corner
+    p_a = (cx0 + radius * dir_a[0], cy0 + radius * dir_a[1])
+    p_b = (cx0 + radius * dir_b[0], cy0 + radius * dir_b[1])
+    center = (cx0 + radius * dir_a[0] + radius * dir_b[0], cy0 + radius * dir_a[1] + radius * dir_b[1])
+    a1 = math.degrees(math.atan2(p_a[1] - center[1], p_a[0] - center[0])) % 360
+    a2 = math.degrees(math.atan2(p_b[1] - center[1], p_b[0] - center[0])) % 360
+    sweep_flag = 1 if (a2 - a1) % 360 <= 180 else 0
+    cuts.append(ArcSegment(p_a[0], p_a[1], p_b[0], p_b[1], center[0], center[1], radius, sweep_flag))
+    return p_a, p_b
+
+
 def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     """Faithful Python port of the reference buildDieline (sharp slot corners)."""
     if isinstance(spec, BoxSpec):
@@ -191,6 +241,13 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
 
     if warnings:
         return DielineResult(ok=False, warnings=warnings, unit=unit)
+
+    fillet_radius_raw = payload.get("fillet_radius")
+    if fillet_radius_raw is None:
+        fillet_radius_cfg = max(0.75 * caliper, float(unit_values["filletMin"]))
+    else:
+        parsed_fillet = parse_dim(fillet_radius_raw)
+        fillet_radius_cfg = parsed_fillet if math.isfinite(parsed_fillet) and parsed_fillet >= 0 else 0.0
 
     panel_length = length + caliper
     panel_width = width + caliper
@@ -231,19 +288,38 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     chamfer = min(float(unit_values["chamferMax"]), body_height / 4)
     half_slot = slot / 2
 
-    cuts: list[LineSegment] = []
+    cuts: list[LineSegment | ArcSegment] = []
     creases: list[LineSegment] = []
 
-    # Top edge + sharp slot notches
+    # Top edge + slot notches, root corners filleted where the slot wall
+    # meets the flap-top crease (the stress point during erection).
     if flap_top > 0:
         cursor_x = x0
+        top_fillet_r = min(fillet_radius_cfg, half_slot * FILLET_CLAMP_MARGIN, flap_top * FILLET_CLAMP_MARGIN)
+        if top_fillet_r > FILLET_MIN_RADIUS and top_fillet_r < fillet_radius_cfg - 1e-9:
+            warnings.append(
+                f"Top slot fillet radius reduced to fit narrow slot/shallow flap "
+                f"(requested {fillet_radius_cfg:.4g}{unit}, used {top_fillet_r:.4g}{unit})."
+            )
         for index in range(1, 4):
             boundary = x_boundaries[index]
-            _seg(cuts, cursor_x, 0.0, boundary - half_slot, 0.0)
-            _seg(cuts, boundary - half_slot, 0.0, boundary - half_slot, y_top)
-            _seg(cuts, boundary - half_slot, y_top, boundary + half_slot, y_top)
-            _seg(cuts, boundary + half_slot, y_top, boundary + half_slot, 0.0)
-            cursor_x = boundary + half_slot
+            left_x, right_x = boundary - half_slot, boundary + half_slot
+            _seg(cuts, cursor_x, 0.0, left_x, 0.0)
+            if top_fillet_r > FILLET_MIN_RADIUS:
+                p1, p2 = _fillet(
+                    cuts, (left_x, y_top), _away(left_x, y_top, left_x, 0.0), _away(left_x, y_top, right_x, y_top), top_fillet_r
+                )
+                _seg(cuts, left_x, 0.0, p1[0], p1[1])
+                p3, p4 = _fillet(
+                    cuts, (right_x, y_top), _away(right_x, y_top, left_x, y_top), _away(right_x, y_top, right_x, 0.0), top_fillet_r
+                )
+                _seg(cuts, p2[0], p2[1], p3[0], p3[1])
+                _seg(cuts, p4[0], p4[1], right_x, 0.0)
+            else:
+                _seg(cuts, left_x, 0.0, left_x, y_top)
+                _seg(cuts, left_x, y_top, right_x, y_top)
+                _seg(cuts, right_x, y_top, right_x, 0.0)
+            cursor_x = right_x
         _seg(cuts, cursor_x, 0.0, x_right, 0.0)
     else:
         _seg(cuts, x0, 0.0, x_right, 0.0)
@@ -251,16 +327,42 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     # Right edge
     _seg(cuts, x_right, 0.0, x_right, y_bottom if is_crash_lock else total_h)
 
-    # Bottom edge + sharp slot notches
+    # Bottom edge + slot notches, root corners filleted (mirror of the top loop).
     if not is_crash_lock and flap_bottom > 0:
         cursor_x = x_right
+        bottom_fillet_r = min(fillet_radius_cfg, half_slot * FILLET_CLAMP_MARGIN, flap_bottom * FILLET_CLAMP_MARGIN)
+        if bottom_fillet_r > FILLET_MIN_RADIUS and bottom_fillet_r < fillet_radius_cfg - 1e-9:
+            warnings.append(
+                f"Bottom slot fillet radius reduced to fit narrow slot/shallow flap "
+                f"(requested {fillet_radius_cfg:.4g}{unit}, used {bottom_fillet_r:.4g}{unit})."
+            )
         for index in range(3, 0, -1):
             boundary = x_boundaries[index]
-            _seg(cuts, cursor_x, total_h, boundary + half_slot, total_h)
-            _seg(cuts, boundary + half_slot, total_h, boundary + half_slot, y_bottom)
-            _seg(cuts, boundary + half_slot, y_bottom, boundary - half_slot, y_bottom)
-            _seg(cuts, boundary - half_slot, y_bottom, boundary - half_slot, total_h)
-            cursor_x = boundary - half_slot
+            right_x, left_x = boundary + half_slot, boundary - half_slot
+            _seg(cuts, cursor_x, total_h, right_x, total_h)
+            if bottom_fillet_r > FILLET_MIN_RADIUS:
+                p1, p2 = _fillet(
+                    cuts,
+                    (right_x, y_bottom),
+                    _away(right_x, y_bottom, right_x, total_h),
+                    _away(right_x, y_bottom, left_x, y_bottom),
+                    bottom_fillet_r,
+                )
+                _seg(cuts, right_x, total_h, p1[0], p1[1])
+                p3, p4 = _fillet(
+                    cuts,
+                    (left_x, y_bottom),
+                    _away(left_x, y_bottom, right_x, y_bottom),
+                    _away(left_x, y_bottom, left_x, total_h),
+                    bottom_fillet_r,
+                )
+                _seg(cuts, p2[0], p2[1], p3[0], p3[1])
+                _seg(cuts, p4[0], p4[1], left_x, total_h)
+            else:
+                _seg(cuts, right_x, total_h, right_x, y_bottom)
+                _seg(cuts, right_x, y_bottom, left_x, y_bottom)
+                _seg(cuts, left_x, y_bottom, left_x, total_h)
+            cursor_x = left_x
         _seg(cuts, cursor_x, total_h, x0, total_h)
     elif not is_crash_lock:
         _seg(cuts, x_right, total_h, x0, total_h)
@@ -352,6 +454,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
         "blank_w": x_right,
         "blank_h": total_h,
         "overlap": overlap_val,
+        "fillet_radius": fillet_radius_cfg,
         "units": unit,
     }
 
@@ -373,102 +476,19 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     )
 
 
-def _format_dim_label(value: float, unit: str) -> str:
-    if unit == "mm":
-        return f"{value:.1f} mm"
-    rounded = round(value, 3)
-    text = f"{rounded:.3f}".rstrip("0").rstrip(".")
-    return f'{text}"'
-
-
-def _add_dimension_label(
-    drawing: svgwrite.Drawing,
-    group: svgwrite.container.Group,
-    x: float,
-    y: float,
-    lines: list[str],
-    *,
-    font_size: float = 0.26,
-) -> None:
-    line_height = font_size * 1.25
-    max_len = max(len(line) for line in lines)
-    box_w = max(font_size * 1.35, max_len * font_size * 0.58)
-    box_h = len(lines) * line_height + font_size * 0.35
-    box_x = x - box_w / 2
-    box_y = y - box_h / 2
-
-    label = group.add(drawing.g(class_="dieline-label"))
-    label.add(
-        drawing.rect(
-            insert=(box_x, box_y),
-            size=(box_w, box_h),
-            rx=font_size * 0.15,
-            ry=font_size * 0.15,
-            fill="#ffffff",
-            fill_opacity=0.92,
-            stroke="#d1d5db",
-            stroke_width=STROKE_WIDTH_IN * 0.6,
-        )
-    )
-
-    text_el = label.add(
-        drawing.text(
-            "",
-            insert=(x, box_y + font_size * 0.95),
-            text_anchor="middle",
-            class_="dieline-label-text",
-        )
-    )
-    for index, line in enumerate(lines):
-        tspan = drawing.tspan(line)
-        tspan.attribs["font-size"] = str(font_size)
-        tspan.attribs["x"] = str(x)
-        if index > 0:
-            tspan.attribs["dy"] = str(line_height)
-        text_el.add(tspan)
-
-
-def _build_dimension_labels(
-    drawing: svgwrite.Drawing,
-    group: svgwrite.container.Group,
-    padded: DielineResult,
-) -> None:
-    """Render the padded result's label marks (already shifted into SVG space)."""
-    unit = padded.unit
-    for mark in padded.labels:
-        if mark.kind == "panel":
-            _add_dimension_label(
-                drawing,
-                group,
-                mark.x,
-                mark.y,
-                [mark.letter or "", _format_dim_label(mark.value or 0.0, unit)],
-                font_size=0.5,
-            )
-        elif mark.kind == "tab":
-            _add_dimension_label(
-                drawing,
-                group,
-                mark.x,
-                mark.y,
-                ["TAB", _format_dim_label(mark.value or 0.0, unit)],
-                font_size=0.35,
-            )
-        elif mark.kind == "flap":
-            _add_dimension_label(
-                drawing,
-                group,
-                mark.x,
-                mark.y,
-                [_format_dim_label(mark.value or 0.0, unit)],
-                font_size=0.32,
-            )
-        elif mark.kind == "glue":
-            _add_dimension_label(drawing, group, mark.x, mark.y, ["GLUE"], font_size=0.28)
-
-
 def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResult:
-    def shift(segment: LineSegment) -> LineSegment:
+    def shift(segment: LineSegment | ArcSegment) -> LineSegment | ArcSegment:
+        if isinstance(segment, ArcSegment):
+            return ArcSegment(
+                segment.x1 + dx,
+                segment.y1 + dy,
+                segment.x2 + dx,
+                segment.y2 + dy,
+                segment.cx + dx,
+                segment.cy + dy,
+                segment.radius,
+                segment.sweep_flag,
+            )
         return LineSegment(
             segment.x1 + dx,
             segment.y1 + dy,
@@ -502,7 +522,7 @@ def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResul
 
 
 def build_svg(result: DielineResult) -> str:
-    """Layered SVG with physical inch sizing, labels, and margin padding."""
+    """Layered SVG (cuts + creases only) with physical inch sizing and margin padding."""
     padded = _shift_geometry(result, SVG_PAD_LEFT, SVG_PAD)
     view_w = padded.total_w + SVG_PAD
     view_h = padded.total_h + SVG_PAD
@@ -518,13 +538,6 @@ def build_svg(result: DielineResult) -> str:
 
     defs = drawing.defs
     defs.add(drawing.style(HAIRLINE_CSS))
-    drawing.add(
-        drawing.rect(
-            insert=(0, 0),
-            size=(view_w, view_h),
-            fill="#fafafa",
-        )
-    )
 
     crease_group = drawing.g(id="crease-lines")
     for segment in padded.creases:
@@ -539,18 +552,21 @@ def build_svg(result: DielineResult) -> str:
 
     cut_group = drawing.g(id="cut-lines")
     for segment in padded.cuts:
-        cut_group.add(
-            drawing.line(
-                start=(segment.x1, segment.y1),
-                end=(segment.x2, segment.y2),
-                class_="dieline-cut",
+        if isinstance(segment, ArcSegment):
+            d = (
+                f"M {segment.x1} {segment.y1} "
+                f"A {segment.radius} {segment.radius} 0 0 {segment.sweep_flag} {segment.x2} {segment.y2}"
             )
-        )
+            cut_group.add(drawing.path(d=d, class_="dieline-cut"))
+        else:
+            cut_group.add(
+                drawing.line(
+                    start=(segment.x1, segment.y1),
+                    end=(segment.x2, segment.y2),
+                    class_="dieline-cut",
+                )
+            )
     drawing.add(cut_group)
-
-    label_group = drawing.g(id="dimension-labels")
-    _build_dimension_labels(drawing, label_group, padded)
-    drawing.add(label_group)
 
     return drawing.tostring()
 
@@ -642,11 +658,23 @@ def build_dxf(result: DielineResult) -> bytes:
     msp = doc.modelspace()
 
     for segment in result.cuts:
-        msp.add_line(
-            (_round_coord(segment.x1), _round_coord(segment.y1)),
-            (_round_coord(segment.x2), _round_coord(segment.y2)),
-            dxfattribs={"layer": "CUT"},
-        )
+        if isinstance(segment, ArcSegment):
+            a1 = math.degrees(math.atan2(segment.y1 - segment.cy, segment.x1 - segment.cx)) % 360
+            a2 = math.degrees(math.atan2(segment.y2 - segment.cy, segment.x2 - segment.cx)) % 360
+            start, end = (a1, a2) if segment.sweep_flag == 1 else (a2, a1)
+            msp.add_arc(
+                (_round_coord(segment.cx), _round_coord(segment.cy)),
+                _round_coord(segment.radius),
+                start,
+                end,
+                dxfattribs={"layer": "CUT"},
+            )
+        else:
+            msp.add_line(
+                (_round_coord(segment.x1), _round_coord(segment.y1)),
+                (_round_coord(segment.x2), _round_coord(segment.y2)),
+                dxfattribs={"layer": "CUT"},
+            )
 
     for segment in result.creases:
         msp.add_line(

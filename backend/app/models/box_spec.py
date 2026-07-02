@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,11 @@ class BoxSpec(BaseModel):
         gt=0,
         description="Slot width between flaps. Defaults from caliper.",
     )
+    fillet_radius: float | None = Field(
+        default=None,
+        ge=0,
+        description="Slot-root fillet radius. Omit for an automatic radius based on caliper; 0 forces sharp corners.",
+    )
     flute_type: FluteType | None = Field(
         default=None,
         description="Optional flute hint for allowances and warnings.",
@@ -53,6 +58,33 @@ class LabelMarkPayload(BaseModel):
     faint: bool = False
 
 
+class CutLine(BaseModel):
+    """A straight cut segment."""
+
+    kind: Literal["line"] = "line"
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+class CutArc(BaseModel):
+    """A quarter-circle slot-root fillet. Only what SVG rendering needs —
+    the arc center and DXF sweep angles are a backend-only concern.
+    """
+
+    kind: Literal["arc"] = "arc"
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    radius: float
+    sweep_flag: Literal[0, 1]
+
+
+CutElement = Annotated[Union[CutLine, CutArc], Field(discriminator="kind")]
+
+
 class GeometryPayload(BaseModel):
     """Raw dieline geometry for the live preview to render natively.
 
@@ -63,7 +95,7 @@ class GeometryPayload(BaseModel):
     unit: Units
     total_w: float
     total_h: float
-    cuts: list[tuple[float, float, float, float]]
+    cuts: list[CutElement]
     creases: list[tuple[float, float, float, float]]
     labels: list[LabelMarkPayload]
 
