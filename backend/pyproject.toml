@@ -1,0 +1,16 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ezdxf>=1.4.4",
+    "fastapi>=0.139.0",
+    "pillow>=12.3.0",
+    "pydantic>=2.13.4",
+    "python-multipart>=0.0.32",
+    "shapely>=2.1.2",
+    "svgwrite>=1.4.3",
+    "uvicorn>=0.49.0",
+]

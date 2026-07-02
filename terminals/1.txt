@@ -1,0 +1,44 @@
+---
+pid: 16544
+cwd: "E:\hood-box-designer\frontend"
+command: "npx create-next-app@latest . --yes"
+started_at: 2026-07-02T19:10:36.419Z
+running_for_ms: 6075004  
+---
+npm warn exec The following package was not found and will be installed: create-next-app@16.2.10
+Creating a new Next.js app in E:\hood-box-designer\frontend.
+
+Using npm.
+
+Initializing project with template: app-tw 
+
+
+Installing dependencies:
+- next
+- react
+- react-dom
+
+Installing devDependencies:
+- @tailwindcss/postcss
+- eslint
+- eslint-config-next
+- tailwindcss
+
+
+added 356 packages, and audited 357 packages in 2m
+
+145 packages are looking for funding
+  run `npm fund` for details
+
+2 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+Generating route types...
+✓ Types generated successfully
+
+Success! Created frontend at E:\hood-box-designer\frontend
+

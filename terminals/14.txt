@@ -1,0 +1,14 @@
+---
+pid: 31044
+cwd: "E:\hood-box-designer\backend"
+command: "C:\\Users\\66081\\.local\\bin\\uv.exe run uvicorn main:app --reload --host 127.0.0.1 --port 8000"
+started_at: 2026-07-02T20:21:57.776Z
+running_for_ms: 1805004  
+---
+INFO:     Will watch for changes in these directories: ['E:\\hood-box-designer\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [31652] using StatReload
+INFO:     Started server process [41860]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\services\dieline_generator.py'. Reloading...

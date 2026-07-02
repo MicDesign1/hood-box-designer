@@ -1,0 +1,311 @@
+---
+pid: 27828
+cwd: "E:\hood-box-designer\frontend"
+command: "npm run dev"
+started_at: 2026-07-02T19:15:35.330Z
+running_for_ms: 5790002  
+---
+[browser] Image with src "http://localhost:3000/vercel.svg" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio.
+[browser] Image with src "http://localhost:3000/vercel.svg" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio.
+⨯ ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+⨯ ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+⨯ ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+[browser] Uncaught Error: ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+    at <unknown> (Error: ./src/app/page.tsx:184:19)
+    at <unknown> (Error: (./src/app/page.tsx:184:19)
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+[browser] ./src/app/page.tsx:184:19
+Expected '</', got 'jsx text'
+  182 |               </p>
+  183 |             ) : null}
+> 184 |             </div>
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 185 |           </CardContent>
+      | ^^^^^^^^^^
+  186 |         </Card>
+  187 |
+  188 |         <div className="flex min-w-0 flex-col gap-4">
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component] 
+
+> frontend@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.10 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.188:3000
+✓ Ready in 922ms
+
+ GET / 200 in 3.0s (next.js: 2.8s, application-code: 153ms)
+ GET / 200 in 60ms (next.js: 7ms, application-code: 52ms)
+✓ Compiled in 119ms
+✓ Compiled in 110ms
+✓ Compiled in 164ms
+✓ Compiled in 97ms
+✓ Compiled in 98ms
+✓ Compiled in 92ms
+ GET / 200 in 58ms (next.js: 6ms, application-code: 52ms)
+
+  We detected TypeScript in your project and reconfigured your tsconfig.json file for you.
+  The following suggested values were added to your tsconfig.json. These values can be changed to fit your project's needs:
+
+  - include was updated to add '.next/dev/types/**/*.ts'
+
+ GET / 200 in 1093ms (next.js: 526ms, application-code: 567ms)
+ GET / 200 in 152ms (next.js: 65ms, application-code: 87ms)
+ GET / 200 in 499ms (next.js: 306ms, application-code: 193ms)
+ GET / 200 in 154ms (next.js: 11ms, application-code: 144ms)
+ GET / 200 in 154ms (next.js: 106ms, application-code: 47ms)
+ GET / 200 in 511ms (next.js: 82ms, application-code: 430ms)
+✓ Compiled in 117ms
+ GET / 200 in 193ms (next.js: 132ms, application-code: 61ms)
+✓ Compiled in 113ms
+ GET / 200 in 228ms (next.js: 163ms, application-code: 64ms)
+ GET / 200 in 186ms (next.js: 9ms, application-code: 178ms)
+✓ Compiled in 264ms
+ GET / 200 in 252ms (next.js: 123ms, application-code: 129ms)
+ GET / 200 in 76ms (next.js: 11ms, application-code: 66ms)
+✓ Compiled in 119ms
+ GET / 500 in 1516ms (next.js: 1261ms, application-code: 255ms)
+ GET / 500 in 44ms (next.js: 25ms, application-code: 19ms)
+ GET / 500 in 31ms (next.js: 15ms, application-code: 15ms)
+✓ Compiled in 112ms
+ GET / 200 in 50ms (next.js: 5ms, application-code: 45ms)
+✓ Compiled in 82ms
+ GET / 200 in 117ms (next.js: 84ms, application-code: 33ms)
+ GET / 200 in 128ms (next.js: 6ms, application-code: 122ms)
+ GET / 200 in 53ms (next.js: 6ms, application-code: 47ms)
+ GET / 200 in 49ms (next.js: 5ms, application-code: 44ms)
+

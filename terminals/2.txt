@@ -1,0 +1,19 @@
+---
+pid: 34200
+cwd: "E:\hood-box-designer\frontend"
+command: "npm install lucide-react"
+started_at: 2026-07-02T19:12:19.104Z
+running_for_ms: 5969991  
+---
+
+added 1 package, and audited 358 packages in 22s
+
+145 packages are looking for funding
+  run `npm fund` for details
+
+2 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.

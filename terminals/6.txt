@@ -1,0 +1,11 @@
+---
+pid: 23924
+cwd: "E:\hood-box-designer\frontend"
+command: "npx shadcn@latest init -y"
+started_at: 2026-07-02T19:21:32.012Z
+running_for_ms: 5420004  
+---
+npm warn exec The following package was not found and will be installed: shadcn@4.12.0
+? Select a component library » - Use arrow-keys. Return to submit.
+>   Radix
+    Base

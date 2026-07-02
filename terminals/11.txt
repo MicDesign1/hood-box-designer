@@ -1,0 +1,330 @@
+---
+pid: 24380
+cwd: "E:\hood-box-designer\frontend"
+command: "npm run dev"
+started_at: 2026-07-02T19:44:39.829Z
+running_for_ms: 4045010  
+---
+⨯ ./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+⨯ ./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+⨯ ./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/page.tsx:23:1
+Export generateDieline doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export generateDieline was not found in module [project]/src/lib/dieline.ts [app-ssr] (ecmascript).
+Did you mean to import fetchDielineSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+[browser] Uncaught Error: ./src/app/page.tsx:23:1
+Export downloadDielineSvg doesn't exist in target module
+  21 |   SelectValue,
+  22 | } from "@/components/ui/select";
+> 23 | import { downloadDielineSvg, generateDieline } from "@/lib/dieline";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 | import {
+  25 |   formatDimensionSummary,
+  26 |   formatInches,
+
+The export downloadDielineSvg was not found in module [project]/src/lib/dieline.ts [app-client] (ecmascript).
+Did you mean to import downloadSvg?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+
+    at <unknown> (Error: ./src/app/page.tsx:23:1)
+    at <unknown> (Error: (./src/app/page.tsx:23:1)

@@ -1,0 +1,12 @@
+---
+pid: 10264
+cwd: "E:\hood-box-designer\frontend"
+command: "if (Test-Path \".next\") { Remove-Item -Recurse -Force \".next\" }; npm run dev"
+started_at: 2026-07-02T19:36:28.321Z
+running_for_ms: 4535002  
+---
+ParserError: 
+Line |
+   1 |  . f (Test-Path ".next") { Remove-Item -Recurse -Force ".next" }; npm ru .
+     |                                                                 ~
+     | Missing closing ')' in expression.
