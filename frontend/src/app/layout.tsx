@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dieline Studio",
+  title: "Hood Container Dieline Studio",
   description: "FEFCO / ECMA dieline generator for corrugated boxes",
 };
 

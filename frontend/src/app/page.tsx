@@ -29,8 +29,8 @@ export default function HomePage() {
             <Package className="size-5" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-              Dieline Studio
+            <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
+              Hood Container Dieline Studio
             </h1>
             <p className="text-sm text-muted-foreground">
               FEFCO / ECMA Dieline Generator
