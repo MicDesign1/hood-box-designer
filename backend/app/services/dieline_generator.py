@@ -290,6 +290,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
 
     cuts: list[LineSegment | ArcSegment] = []
     creases: list[LineSegment] = []
+    labels: list[LabelMark] = []
 
     # Top edge + slot notches, root corners filleted where the slot wall
     # meets the flap-top crease (the stress point during erection).
@@ -327,8 +328,44 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
     # Right edge
     _seg(cuts, x_right, 0.0, x_right, y_bottom if is_crash_lock else total_h)
 
-    # Bottom edge + slot notches, root corners filleted (mirror of the top loop).
-    if not is_crash_lock and flap_bottom > 0:
+    # Bottom edge: crash-lock gets the alternating major/minor self-locking
+    # base (ported from the reference implementation); everything else gets
+    # the RSC-style slot notches, root corners filleted (mirror of the top loop).
+    if is_crash_lock:
+        def _minor_flap(xa: float, xbnd: float) -> None:
+            """A short trapezoidal tuck-under flap (45° cut, no glue diagonal)."""
+            _seg(cuts, xbnd - caliper, y_bottom, xbnd - caliper, y_bottom + minor_depth)
+            _seg(cuts, xbnd - caliper, y_bottom + minor_depth, xa + caliper + minor_depth, y_bottom + minor_depth)
+            _seg(cuts, xa + caliper + minor_depth, y_bottom + minor_depth, xa + caliper, y_bottom)
+            _cr(creases, xa + caliper, y_bottom, xbnd - caliper, y_bottom)
+
+        def _major_flap(xa: float, xbnd: float) -> None:
+            """A deeper flap with an integrated glue diagonal for self-locking."""
+            _seg(cuts, xbnd - caliper, y_bottom, xbnd - caliper, y_bottom + major_depth)
+            _seg(cuts, xbnd - caliper, y_bottom + major_depth, xa + caliper, y_bottom + major_depth)
+            _seg(cuts, xa + caliper, y_bottom + major_depth, xa + caliper, y_bottom)
+            _cr(creases, xa + caliper, y_bottom, xbnd - caliper, y_bottom)
+            _cr(creases, xa + caliper, y_bottom, xa + caliper + major_depth, y_bottom + major_depth)
+            labels.append(
+                LabelMark(
+                    x=xa + caliper + major_depth * 0.32,
+                    y=y_bottom + major_depth * 0.72,
+                    kind="glue",
+                    small=True,
+                    faint=True,
+                )
+            )
+
+        _seg(cuts, x_right, y_bottom, x_boundaries[4] - caliper, y_bottom)
+        _minor_flap(x_boundaries[3], x_boundaries[4])
+        _seg(cuts, x_boundaries[3] + caliper, y_bottom, x_boundaries[3] - caliper, y_bottom)
+        _major_flap(x_boundaries[2], x_boundaries[3])
+        _seg(cuts, x_boundaries[2] + caliper, y_bottom, x_boundaries[2] - caliper, y_bottom)
+        _minor_flap(x_boundaries[1], x_boundaries[2])
+        _seg(cuts, x_boundaries[1] + caliper, y_bottom, x_boundaries[1] - caliper, y_bottom)
+        _major_flap(x_boundaries[0], x_boundaries[1])
+        _seg(cuts, x_boundaries[0] + caliper, y_bottom, x0, y_bottom)
+    elif flap_bottom > 0:
         cursor_x = x_right
         bottom_fillet_r = min(fillet_radius_cfg, half_slot * FILLET_CLAMP_MARGIN, flap_bottom * FILLET_CLAMP_MARGIN)
         if bottom_fillet_r > FILLET_MIN_RADIUS and bottom_fillet_r < fillet_radius_cfg - 1e-9:
@@ -364,7 +401,7 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
                 _seg(cuts, left_x, y_bottom, left_x, total_h)
             cursor_x = left_x
         _seg(cuts, cursor_x, total_h, x0, total_h)
-    elif not is_crash_lock:
+    else:
         _seg(cuts, x_right, total_h, x0, total_h)
 
     # Left edge + glue-tab chamfer
@@ -389,8 +426,8 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
             _cr(creases, left, y_bottom, right, y_bottom)
 
     # Dimension callouts, ported 1:1 from the reference implementation's label
-    # placement (panel centers, glue tab, flap depth).
-    labels: list[LabelMark] = []
+    # placement (panel centers, glue tab, flap depth). GLUE labels for
+    # crash-lock were already appended above, inline with each major flap.
     mid_y = y_top + body_height / 2
     names = ["L", "W", "L", "W"]
     panel_dims = [panel_length, panel_width, panel_length, panel_width]
@@ -420,8 +457,8 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
             )
         )
     elif is_crash_lock:
-        flap_left = x_boundaries[0]
-        flap_right = x_boundaries[1]
+        flap_left = x_boundaries[2]
+        flap_right = x_boundaries[3]
         labels.append(
             LabelMark(
                 x=(flap_left + flap_right) / 2,
@@ -429,15 +466,6 @@ def build_dieline(spec: BoxSpec | dict[str, Any]) -> DielineResult:
                 kind="flap",
                 value=major_depth,
                 small=True,
-            )
-        )
-        labels.append(
-            LabelMark(
-                x=flap_left + major_depth * 0.32,
-                y=y_bottom + major_depth * 0.72,
-                kind="glue",
-                small=True,
-                faint=True,
             )
         )
 
