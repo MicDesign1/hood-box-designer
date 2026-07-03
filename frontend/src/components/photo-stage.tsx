@@ -127,7 +127,14 @@ export function PhotoStage({
 
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
-  }, [zoomAt]);
+    // `vb !== null` is deliberate: on first mount vb is still null, so the
+    // container div hasn't rendered yet and this effect's first run finds
+    // nothing to bind to. image.w/h (zoomAt's only dep) are already fully
+    // populated before PhotoStage ever mounts, so nothing else would make
+    // this effect re-run once the real container exists — re-run exactly
+    // once, when vb flips from null to a real viewBox after fit().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomAt, vb !== null]);
 
   function hitTestActivePoint(clientX: number, clientY: number): number | null {
     const svg = svgRef.current;

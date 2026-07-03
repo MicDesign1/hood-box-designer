@@ -130,7 +130,11 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
 
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
-  }, [zoomAt]);
+    // `vb !== null` guards against the container div not existing yet on
+    // this effect's first run (see the identical fix + explanation in
+    // PhotoStage, which hit this for real).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomAt, vb !== null]);
 
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
