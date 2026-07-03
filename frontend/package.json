@@ -2,16 +2,17 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-"scripts": {
-  "dev": "next dev",
-  "build": "next build && npx @cloudflare/next-on-pages",
-  "start": "next start"
-},
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
-    "@cloudflare/next-on-pages": "^1.13.16",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "geist": "^1.7.2",
     "lucide-react": "^1.23.0",
     "next": "^15.5.2",
     "react": "19.2.4",
@@ -28,6 +29,11 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
-    "typescript": "^6.0.3"
+    "typescript": "^5.9.3"
+  },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.2",
+    "lightningcss": "^1.32.0",
+    "lightningcss-linux-x64-gnu": "^1.32.0"
   }
 }
