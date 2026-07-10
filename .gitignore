@@ -8,6 +8,13 @@ frontend/.env*.local
 frontend/out/
 
 # =========================
+# Python (repo-wide)
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+
+# =========================
 # Backend (Python / FastAPI)
 # =========================
 backend/.venv/
@@ -27,6 +34,12 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# =========================
+# Generated dieline outputs (repo root)
+# =========================
+/dieline-*.dxf
+/dieline-*.svg
 
 # =========================
 # Accidental junk (terminals, temp files, etc.)
