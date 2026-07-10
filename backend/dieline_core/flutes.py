@@ -8,9 +8,9 @@ CLI-generated box as a rough-caliper draft.
 
 The existing backend/API has no flute->caliper mapping at all — `flute_type`
 on BoxSpec is accepted but unused; callers supply `caliper` directly. This
-table exists only so the CLI's `--flute` flag has something to drive
-`caliper` with. It does not change the underlying geometry math in
-`dieline_core/geometry.py` in any way — it only selects a caliper input.
+table exists so the CLI's `--flute` flag can drive `caliper` for slot/fillet
+geometry. For 0201, panel scoring allowances come from `dieline_core/scoring.py`
+(table-driven per flute), not from caliper.
 """
 
 from __future__ import annotations

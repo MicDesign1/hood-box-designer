@@ -87,10 +87,18 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="TYPE",
         help=(
-            f"Flute type - supported: {', '.join(SUPPORTED_FLUTES)}. Selects the board "
-            "caliper (thickness) fed into the geometry math; see "
-            "backend/dieline_core/flutes.py for the exact values "
-            "(TODO(owner) placeholders - confirm against your real board specs)."
+            f"Flute type - supported: {', '.join(SUPPORTED_FLUTES)}. Selects scoring "
+            "allowances for 0201 (B, C, DW rows) and board caliper for slot/fillet "
+            "geometry; see backend/dieline_core/scoring.py and flutes.py."
+        ),
+    )
+    generate.add_argument(
+        "--joint",
+        default="taped",
+        choices=["taped", "glued"],
+        help=(
+            "Manufacturer's joint style. 'taped' (default) has no glue tab; "
+            "'glued' adds a 1.5 in glue tab per the scoring allowance reference."
         ),
     )
     generate.add_argument(
@@ -144,6 +152,8 @@ def _run_generate(args: argparse.Namespace) -> int:
         "width": width,
         "height": depth,
         "caliper": caliper,
+        "flute": flute,
+        "joint": args.joint,
         "units": args.units,
     }
 

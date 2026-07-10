@@ -5,9 +5,11 @@ dependency on FastAPI, uvicorn, pydantic, or anything under `frontend/` —
 both the FastAPI backend (`app/services/dieline_generator.py`) and the
 `dieline` CLI (`cli/dieline_cli/main.py`) import from here.
 
-Ported byte-for-byte from the original `app/services/dieline_generator.py`
-during the CLI extraction. Do not change the allowance/geometry math here
-without updating both callers and re-running the CLI/API parity check.
+Ported from the original `app/services/dieline_generator.py`
+during the CLI extraction. Style 0201 panel/flap allowances are
+table-driven (see `scoring.py` and scoring-allowances.md); other styles
+still use caliper-based allowances. Update both callers and re-run parity
+checks when changing geometry math.
 """
 
 from __future__ import annotations
@@ -20,6 +22,14 @@ from typing import TYPE_CHECKING, Any
 
 import ezdxf
 import svgwrite
+
+from dieline_core.scoring import (
+    RSC_0201_SCORING_FLUTES,
+    fraction_to_unit,
+    glue_tab_for_joint,
+    normalize_scoring_flute,
+    rsc_0201_taped_allowances,
+)
 
 if TYPE_CHECKING:
     from ezdxf.document import Drawing as DxfDrawing
@@ -234,10 +244,20 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     height = parse_dim(payload.get("height"))
     caliper = parse_dim(payload.get("caliper"))
     glue_tab = parse_dim(payload.get("glue_tab"))
+    joint = str(payload.get("joint", "taped")).strip().lower()
     overlap = parse_dim(payload.get("overlap"))
     slot_in = parse_dim(payload.get("slot"))
+    scoring_flute = normalize_scoring_flute(payload.get("flute") or payload.get("flute_type"))
 
-    glue = glue_tab if math.isfinite(glue_tab) and glue_tab > 0 else (1.25 if unit == "in" else 32.0)
+    if fefco_code == "0201":
+        if math.isfinite(glue_tab) and glue_tab >= 0:
+            glue = glue_tab
+        elif joint == "glued":
+            glue = glue_tab_for_joint("glued", unit)
+        else:
+            glue = 0.0
+    else:
+        glue = glue_tab if math.isfinite(glue_tab) and glue_tab > 0 else (1.25 if unit == "in" else 32.0)
     overlap_val = overlap if math.isfinite(overlap) and overlap > 0 else (1.375 if unit == "in" else 35.0)
     slot = (
         slot_in
@@ -250,6 +270,14 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         warnings.append("Enter positive L × W × H")
     if not (caliper > 0):
         warnings.append("Caliper must be greater than zero.")
+    if fefco_code == "0201":
+        if joint not in ("taped", "glued"):
+            warnings.append("joint must be 'taped' or 'glued'.")
+        if scoring_flute is None:
+            scoring_flute = "C"
+        elif scoring_flute not in RSC_0201_SCORING_FLUTES:
+            supported = ", ".join(RSC_0201_SCORING_FLUTES)
+            warnings.append(f"unsupported flute '{scoring_flute}' for 0201 scoring (supported: {supported}).")
 
     if warnings:
         return DielineResult(ok=False, warnings=warnings, unit=unit)
@@ -261,25 +289,42 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         parsed_fillet = parse_dim(fillet_radius_raw)
         fillet_radius_cfg = parsed_fillet if math.isfinite(parsed_fillet) and parsed_fillet >= 0 else 0.0
 
-    panel_length = length + caliper
-    panel_width = width + caliper
-    body_height = height + caliper
     is_crash_lock = fefco_code == "0713"
 
+    panel_length: float
+    panel_width: float
+    body_height: float
     flap_top: float
     flap_bottom: float
-    if fefco_code == "0200":
-        flap_top = 0.0
-        flap_bottom = (width + caliper) / 2
-    elif fefco_code == "0202":
-        flap_top = flap_bottom = (width + caliper + overlap_val) / 2
-    elif fefco_code == "0203":
-        flap_top = flap_bottom = max(0.0, width + caliper - float(unit_values["folClear"]))
-    elif fefco_code == "0713":
-        flap_top = (width + caliper) / 2
-        flap_bottom = 0.0
+
+    if fefco_code == "0201":
+        row = rsc_0201_taped_allowances(scoring_flute)  # type: ignore[arg-type]
+        base_dims = (length, width, length, width)
+        panels = [
+            base + fraction_to_unit(adder, unit)
+            for base, adder in zip(base_dims, row.wcc_panel_adds, strict=True)
+        ]
+        panel_length, panel_width = panels[0], panels[1]
+        body_height = height + fraction_to_unit(row.depth_add, unit)
+        half_flap = width / 2 + fraction_to_unit(row.flap_half_add, unit)
+        flap_top = flap_bottom = half_flap
     else:
-        flap_top = flap_bottom = (width + caliper) / 2
+        panel_length = length + caliper
+        panel_width = width + caliper
+        body_height = height + caliper
+        panels = [panel_length, panel_width, panel_length, panel_width]
+        if fefco_code == "0200":
+            flap_top = 0.0
+            flap_bottom = (width + caliper) / 2
+        elif fefco_code == "0202":
+            flap_top = flap_bottom = (width + caliper + overlap_val) / 2
+        elif fefco_code == "0203":
+            flap_top = flap_bottom = max(0.0, width + caliper - float(unit_values["folClear"]))
+        elif fefco_code == "0713":
+            flap_top = (width + caliper) / 2
+            flap_bottom = 0.0
+        else:
+            flap_top = flap_bottom = (width + caliper) / 2
 
     hook = min(float(unit_values["hookMax"]), panel_width * 0.15)
     major_depth = panel_width / 2 + hook
@@ -287,7 +332,6 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     if is_crash_lock:
         flap_bottom = major_depth
 
-    panels = [panel_length, panel_width, panel_length, panel_width]
     x0 = glue
     x_boundaries = [x0]
     for panel in panels:
@@ -442,7 +486,6 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     # crash-lock were already appended above, inline with each major flap.
     mid_y = y_top + body_height / 2
     names = ["L", "W", "L", "W"]
-    panel_dims = [panel_length, panel_width, panel_length, panel_width]
     for index in range(4):
         center_x = (x_boundaries[index] + x_boundaries[index + 1]) / 2
         labels.append(
@@ -450,12 +493,13 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
                 x=center_x,
                 y=mid_y,
                 kind="panel",
-                value=panel_dims[index],
+                value=panels[index],
                 letter=names[index],
                 panel_index=index + 1,
             )
         )
-    labels.append(LabelMark(x=glue / 2, y=mid_y, kind="tab", value=glue, small=True))
+    if glue > 0:
+        labels.append(LabelMark(x=glue / 2, y=mid_y, kind="tab", value=glue, small=True))
     if not is_crash_lock and flap_bottom > 0:
         flap_left = x_boundaries[0]
         flap_right = x_boundaries[1]
@@ -482,8 +526,10 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         )
 
     derived = {
-        "panel_L": panel_length,
-        "panel_W": panel_width,
+        "panel_L": panels[0],
+        "panel_W": panels[1],
+        "panel_L2": panels[2],
+        "panel_W2": panels[3],
         "depth_score": body_height,
         "flap_top": flap_top,
         "flap_bottom": flap_bottom,
@@ -496,6 +542,8 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         "overlap": overlap_val,
         "fillet_radius": fillet_radius_cfg,
         "units": unit,
+        "joint": joint if fefco_code == "0201" else None,
+        "scoring_flute": scoring_flute if fefco_code == "0201" else None,
     }
 
     if is_crash_lock:
