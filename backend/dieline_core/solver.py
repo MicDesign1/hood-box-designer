@@ -12,10 +12,15 @@ from fractions import Fraction
 from typing import Any, Literal
 
 from dieline_core.scoring import (
+    DEFAULT_TAB_WIDTH_IN,
     HSC_0200_TAPED,
     RSC_0201_TAPED,
+    acc_depth_panel_add,
     glue_tab_for_joint,
+    joint_spec_label,
     normalize_scoring_flute,
+    outside_dimensions_from_id,
+    wcc_panel_adders,
     wcc_sheet_adder,
 )
 
@@ -31,24 +36,36 @@ HIGH_RMS = 1.0 / 32.0
 MEDIUM_RMS = 1.0 / 16.0
 SNAP_RMS_TOLERANCE = 1.0 / 32.0
 MIN_CARTON_DIM = 1.0
+NEAR_TIE_RMS = 1.0 / 16.0
+INCONSISTENCY_SUM_THRESHOLD = 1.0 / 4.0
+NEAR_TIE_REASON = "two specs fit within tape noise — need a sharper measurement"
+SUGGESTED_PANEL_D_INPUT = "depth panel crease-to-crease"
+SUGGESTED_PANEL1_WIDTH_INPUT = "first panel crease-to-crease"
+SUGGESTED_PANEL2_WIDTH_INPUT = "second panel crease-to-crease"
+INCONSISTENCY_WARNING = "measurements inconsistent — re-check blank width / tab exclusion"
 UNDERDETERMINED_REASON = "underdetermined — need one more measurement"
 SUGGESTED_FLAP_INPUT = "flap height (edge of blank to first score)"
 SUGGESTED_PANEL1_INPUT = "panel-1 (edge to first vertical score)"
 TUBE_LW_AMBIGUOUS_REASON = "underdetermined — L/W split ambiguous; need one more measurement"
 TUBE_FLAP_H_ERROR = "--flap-h is not valid for style tube; use --panel-1 instead"
+PANEL_D_TUBE_ERROR = "--panel-d is not valid for style tube; blank height is D"
 
 ALL_STYLES: tuple[StyleName, ...] = ("rsc", "hsc", "tube")
 
 
 @dataclass(frozen=True)
 class Measurements:
-    blank_w: float
-    blank_h: float
+    blank_w: float | None = None
+    blank_h: float | None = None
     scores_x: tuple[float, ...] | None = None
     scores_y: tuple[float, ...] | None = None
     panels_x: tuple[float, ...] | None = None
     flap_h: float | None = None
     panel_1: float | None = None
+    panel_2: float | None = None
+    panel_d: float | None = None
+    """When True with joint=glued, blank_w is body width only (tab not included)."""
+    blank_w_excludes_tab: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,12 +116,19 @@ class SolveResult:
     reason: str | None = None
     suggested_input: str | None = None
     runner_up: dict[str, Any] | None = None
+    tab_width: float = float(DEFAULT_TAB_WIDTH_IN)
+    warning: str | None = None
+    outside_L: float | None = None
+    outside_W: float | None = None
+    outside_D: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "style": self.style,
             "flute": self.flute,
             "joint": self.joint,
+            "joint_label": joint_spec_label(self.joint, self.tab_width),
+            "tab_width": self.tab_width,
             "L": self.length,
             "W": self.width,
             "D": self.depth,
@@ -116,6 +140,12 @@ class SolveResult:
             "confidence": self.confidence,
             "rotated": self.rotated,
         }
+        if self.outside_L is not None:
+            payload["outside_L"] = self.outside_L
+            payload["outside_W"] = self.outside_W
+            payload["outside_D"] = self.outside_D
+        if self.warning is not None:
+            payload["warning"] = self.warning
         if self.reason is not None:
             payload["reason"] = self.reason
         if self.suggested_input is not None:
@@ -125,12 +155,166 @@ class SolveResult:
         return payload
 
 
+def _resolved_panels_x(measurements: Measurements) -> tuple[float, ...] | None:
+    if measurements.panels_x:
+        return measurements.panels_x
+    if measurements.panel_1 is not None and measurements.panel_2 is not None:
+        return (measurements.panel_1, measurements.panel_2)
+    return None
+
+
+def _width_adder(flute: str) -> float:
+    return float(wcc_panel_adders(flute)[1])
+
+
+def _predicted_panel_d(style: StyleName, flute: str, depth: float) -> float:
+    return depth + float(acc_depth_panel_add(style, flute))
+
+
+def _depth_from_panel_d(style: StyleName, flute: str, panel_d: float) -> float:
+    return panel_d - float(acc_depth_panel_add(style, flute))
+
+
+def _length_from_panel_width(panel_1: float, flute: str) -> float:
+    return panel_1 - _length_adder(flute)
+
+
+def _width_from_panel_width(panel_2: float, flute: str) -> float:
+    return panel_2 - _width_adder(flute)
+
+
+def _has_cross_check_blanks(measurements: Measurements) -> bool:
+    return measurements.blank_w is not None or measurements.blank_h is not None
+
+
+def _has_panel_primary(style: StyleName, measurements: Measurements) -> bool:
+    panels = _resolved_panels_x(measurements)
+    if panels is None or len(panels) < 2:
+        return False
+    if style == "tube":
+        return measurements.panel_1 is not None and measurements.blank_h is not None
+    return measurements.panel_d is not None and measurements.panel_1 is not None
+
+
+def _distinct_spec(a: SolveCandidate, b: SolveCandidate) -> bool:
+    return (
+        abs(a.length - b.length) > 1e-6
+        or abs(a.width - b.width) > 1e-6
+        or abs(a.depth - b.depth) > 1e-6
+    )
+
+
+def _suggest_separating_input(a: SolveCandidate, b: SolveCandidate) -> str:
+    if abs(a.depth - b.depth) > 1e-6:
+        return SUGGESTED_PANEL_D_INPUT
+    if abs(a.length - b.length) > 1e-6:
+        return SUGGESTED_PANEL1_WIDTH_INPUT
+    if abs(a.width - b.width) > 1e-6:
+        return SUGGESTED_PANEL2_WIDTH_INPUT
+    return SUGGESTED_PANEL_D_INPUT
+
+
+def _near_tie_ambiguity(
+    candidates: list[SolveCandidate],
+    best: SolveCandidate,
+) -> tuple[str | None, str | None]:
+    for alt in candidates:
+        if alt is best or not _distinct_spec(alt, best):
+            continue
+        if alt.rms_error_in <= best.rms_error_in + NEAR_TIE_RMS:
+            return NEAR_TIE_REASON, _suggest_separating_input(best, alt)
+    return None, None
+
+
+def _direct_dims_from_panels(
+    style: StyleName,
+    flute: str,
+    measurements: Measurements,
+) -> tuple[float, float, float] | None:
+    panels = _resolved_panels_x(measurements)
+    if panels is None or len(panels) < 2 or measurements.panel_1 is None:
+        return None
+    length = _length_from_panel_width(measurements.panel_1, flute)
+    width = _width_from_panel_width(panels[1], flute)
+    if style == "tube":
+        if measurements.blank_h is None:
+            return None
+        depth = measurements.blank_h
+    elif measurements.panel_d is None:
+        return None
+    else:
+        depth = _depth_from_panel_d(style, flute, measurements.panel_d)
+    return length, width, depth
+
+
+def _should_check_near_tie(
+    style: StyleName,
+    measurements: Measurements,
+    *,
+    determined: bool,
+) -> bool:
+    if not determined:
+        return False
+    if _has_panel_primary(style, measurements):
+        return False
+    if measurements.panel_d is not None:
+        return False
+    panels = _resolved_panels_x(measurements)
+    if panels is not None and len(panels) >= 2:
+        return False
+    return True
+
+
+def _consistency_mismatch(
+    style: StyleName,
+    flute: str,
+    joint: JointName,
+    measurements: Measurements,
+    length: float,
+    width: float,
+    depth: float,
+    *,
+    tab_width: float,
+) -> float | None:
+    if not _has_cross_check_blanks(measurements):
+        return None
+    direct = _direct_dims_from_panels(style, flute, measurements)
+    if direct is not None:
+        length, width, depth = direct
+    predicted = predict_blank(style, flute, joint, length, width, depth, tab_width=tab_width)
+    total = 0.0
+    count = 0
+    if measurements.blank_w is not None:
+        total += _compare_blank_w(
+            measurements.blank_w,
+            predicted.blank_w,
+            joint=joint,
+            tab_width=tab_width,
+            excludes_tab=measurements.blank_w_excludes_tab,
+        )
+        count += 1
+    if measurements.blank_h is not None:
+        total += abs(measurements.blank_h - predicted.blank_h)
+        count += 1
+    if measurements.flap_h is not None and predicted.scores_y:
+        total += abs(measurements.flap_h - predicted.scores_y[0])
+        count += 1
+    if count == 0:
+        return None
+    return total
+
+
+def _cap_confidence(confidence: Confidence, cap: Confidence) -> Confidence:
+    order = {"high": 3, "medium": 2, "low": 1, "ambiguous": 0}
+    return confidence if order[confidence] <= order[cap] else cap
+
+
 def _frac(flute: str, value: Fraction) -> float:
     return float(value)
 
 
-def _glue_tab(joint: JointName) -> float:
-    return glue_tab_for_joint(joint, "in")
+def _glue_tab(joint: JointName, tab_width: float) -> float:
+    return glue_tab_for_joint(joint, "in", tab_width)
 
 
 def _wcc_panels(flute: str, length: float, width: float) -> tuple[float, ...]:
@@ -148,10 +332,12 @@ def predict_blank(
     length: float,
     width: float,
     depth: float,
+    *,
+    tab_width: float = float(DEFAULT_TAB_WIDTH_IN),
 ) -> PredictedBlank:
     """Forward model: inside dims -> blank size and score positions (inches)."""
     scoring_key = normalize_scoring_flute(flute) or ""
-    glue = _glue_tab(joint)
+    glue = _glue_tab(joint, tab_width)
     panels = _wcc_panels(flute, length, width)
     blank_w = glue + sum(panels)
     x = glue
@@ -206,7 +392,12 @@ def _on_grid(value: float, step: Fraction) -> bool:
 
 
 def _tube_lw_split_known(measurements: Measurements) -> bool:
+    panels = _resolved_panels_x(measurements)
     return (
+        measurements.panel_1 is not None
+        and panels is not None
+        and len(panels) >= 2
+    ) or (
         measurements.panel_1 is not None
         or bool(measurements.scores_x)
         or bool(measurements.panels_x)
@@ -214,21 +405,45 @@ def _tube_lw_split_known(measurements: Measurements) -> bool:
 
 
 def _has_third_constraint(style: StyleName, measurements: Measurements) -> bool:
+    if _has_panel_primary(style, measurements):
+        return True
     if style == "tube":
         return _tube_lw_split_known(measurements)
     return (
         measurements.flap_h is not None
         or measurements.panel_1 is not None
+        or measurements.panel_d is not None
         or bool(measurements.scores_x)
         or bool(measurements.scores_y)
         or bool(measurements.panels_x)
+        or measurements.panel_2 is not None
     )
+
+
+def _has_minimum_inputs(style: StyleName | None, measurements: Measurements) -> bool:
+    if style is not None and _has_panel_primary(style, measurements):
+        return True
+    if measurements.blank_w is not None and measurements.blank_h is not None:
+        return True
+    if style is None:
+        for candidate_style in ALL_STYLES:
+            if _has_panel_primary(candidate_style, measurements):
+                return True
+    return False
 
 
 def validate_measurements(style: StyleName | None, measurements: Measurements) -> str | None:
     """Return a user-facing error string, or None if inputs are valid."""
     if measurements.flap_h is not None and style == "tube":
         return TUBE_FLAP_H_ERROR
+    if measurements.panel_d is not None and style == "tube":
+        return PANEL_D_TUBE_ERROR
+    if style is not None and not _has_minimum_inputs(style, measurements):
+        if style == "tube":
+            return "need panel-1, panel-2, and blank height (or full blank width and height)"
+        return "need panel-d, panel-1, and panel-2 (or full blank width and height)"
+    if style is None and not _has_minimum_inputs(None, measurements):
+        return "need panel measurements or full blank width and height"
     return None
 
 
@@ -240,8 +455,16 @@ def _ambiguity_message(style: StyleName) -> tuple[str, str]:
 
 def _constraint_count(style: StyleName, measurements: Measurements) -> int:
     """Count independent measurement inputs available for this style."""
-    count = 2  # blank_w and blank_h are always required
+    count = 0
+    if measurements.blank_w is not None:
+        count += 1
+    if measurements.blank_h is not None:
+        count += 1
+    if measurements.panel_d is not None:
+        count += 1
     if measurements.panel_1 is not None:
+        count += 1
+    if measurements.panel_2 is not None:
         count += 1
     if style != "tube" and measurements.flap_h is not None:
         count += 1
@@ -326,36 +549,77 @@ def _compare_values(
     residuals.extend(abs(m - p) for m, p in zip(measured, predicted, strict=True))
 
 
+def _compare_blank_w(
+    measured: float,
+    predicted_w: float,
+    *,
+    joint: JointName,
+    tab_width: float,
+    excludes_tab: bool,
+) -> float:
+    if joint == "glued" and excludes_tab:
+        return abs(measured - (predicted_w - tab_width))
+    return abs(measured - predicted_w)
+
+
 def _rms(
     measurements: Measurements,
     predicted: PredictedBlank,
     *,
     rotated: bool,
+    joint: JointName,
+    tab_width: float,
+    style: StyleName,
+    flute: str,
+    depth: float,
 ) -> float:
     residuals: list[float] = []
+    excludes_tab = measurements.blank_w_excludes_tab
+    panels = _resolved_panels_x(measurements)
 
     if rotated:
-        _compare_values((measurements.blank_w,), (predicted.blank_h,), residuals)
-        _compare_values((measurements.blank_h,), (predicted.blank_w,), residuals)
+        if measurements.blank_w is not None:
+            _compare_values((measurements.blank_w,), (predicted.blank_h,), residuals)
+        if measurements.blank_h is not None:
+            _compare_values((measurements.blank_h,), (predicted.blank_w,), residuals)
         _compare_values(measurements.scores_x, predicted.scores_y, residuals)
         _compare_values(measurements.scores_y, predicted.scores_x, residuals)
-        if measurements.panels_x:
-            _compare_values(measurements.panels_x, predicted.panels_x, residuals)
+        if panels:
+            _compare_values(panels, predicted.panels_x, residuals)
         if measurements.flap_h is not None and predicted.scores_x:
             _compare_values((measurements.flap_h,), (predicted.scores_x[0],), residuals)
-        if measurements.panel_1 is not None and predicted.scores_x:
-            _compare_values((measurements.panel_1,), (predicted.scores_x[0],), residuals)
+        if measurements.panel_1 is not None and predicted.panels_x:
+            _compare_values((measurements.panel_1,), (predicted.panels_x[0],), residuals)
     else:
-        _compare_values((measurements.blank_w,), (predicted.blank_w,), residuals)
-        _compare_values((measurements.blank_h,), (predicted.blank_h,), residuals)
-        _compare_values(measurements.scores_x, predicted.scores_x, residuals)
+        if measurements.blank_w is not None:
+            residuals.append(
+                _compare_blank_w(
+                    measurements.blank_w,
+                    predicted.blank_w,
+                    joint=joint,
+                    tab_width=tab_width,
+                    excludes_tab=excludes_tab,
+                )
+            )
+        if measurements.blank_h is not None:
+            _compare_values((measurements.blank_h,), (predicted.blank_h,), residuals)
+        if measurements.panel_d is not None and style != "tube":
+            expected_d = _predicted_panel_d(style, flute, depth)
+            _compare_values((measurements.panel_d,), (expected_d,), residuals)
+        if measurements.scores_x:
+            predicted_scores = predicted.scores_x
+            if joint == "glued" and excludes_tab:
+                predicted_scores = tuple(s - tab_width for s in predicted.scores_x)
+            _compare_values(measurements.scores_x, predicted_scores, residuals)
         _compare_values(measurements.scores_y, predicted.scores_y, residuals)
-        if measurements.panels_x:
-            _compare_values(measurements.panels_x, predicted.panels_x, residuals)
+        if panels:
+            _compare_values(panels, predicted.panels_x[: len(panels)], residuals)
+        elif measurements.panel_1 is not None and predicted.panels_x:
+            _compare_values((measurements.panel_1,), (predicted.panels_x[0],), residuals)
+        if measurements.panel_2 is not None and len(predicted.panels_x) >= 2:
+            _compare_values((measurements.panel_2,), (predicted.panels_x[1],), residuals)
         if measurements.flap_h is not None and predicted.scores_y:
             _compare_values((measurements.flap_h,), (predicted.scores_y[0],), residuals)
-        if measurements.panel_1 is not None and predicted.scores_x:
-            _compare_values((measurements.panel_1,), (predicted.scores_x[0],), residuals)
 
     if not residuals:
         return math.inf
@@ -373,11 +637,37 @@ def _estimate_ranges(
     *,
     rotated: bool,
     search_margin: float,
+    joint: JointName,
+    tab_width: float,
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     """Return (L range), (W range), (D range) as (lo, hi)."""
     scoring_key = normalize_scoring_flute(flute) or ""
     wcc_add = float(wcc_sheet_adder(flute))
-    glue = 0.0
+    if joint == "glued" and not measurements.blank_w_excludes_tab:
+        glue = _glue_tab(joint, tab_width)
+    else:
+        glue = 0.0
+
+    panels = _resolved_panels_x(measurements)
+    if _has_panel_primary(style, measurements) and panels is not None:
+        length_est = _round_quarter(_length_from_panel_width(measurements.panel_1 or panels[0], flute))
+        width_est = _round_quarter(_width_from_panel_width(panels[1], flute))
+        if style == "tube":
+            depth_est = _round_quarter(measurements.blank_h or 4.0)
+        elif measurements.panel_d is not None:
+            depth_est = _round_quarter(_depth_from_panel_d(style, flute, measurements.panel_d))
+        else:
+            depth_est = 4.0
+
+        def _tight(center: float) -> tuple[float, float]:
+            lo = max(MIN_CARTON_DIM, center - FLAP_SEARCH_MARGIN)
+            hi = center + FLAP_SEARCH_MARGIN
+            return (lo, hi)
+
+        return _tight(length_est), _tight(width_est), _tight(depth_est)
+
+    if measurements.blank_w is None or measurements.blank_h is None:
+        return (MIN_CARTON_DIM, 20.0), (MIN_CARTON_DIM, 20.0), (MIN_CARTON_DIM, 20.0)
 
     blank_w = measurements.blank_w if not rotated else measurements.blank_h
     blank_h = measurements.blank_h if not rotated else measurements.blank_w
@@ -502,6 +792,7 @@ def _snap_to_quarter(
     measurements: Measurements,
     *,
     determined: bool,
+    tab_width: float,
 ) -> SolveCandidate:
     """Prefer quarter-inch specs when fit is nearly as good as the grid best."""
     snapped_l = round(candidate.length * 4.0) / 4.0
@@ -517,6 +808,7 @@ def _snap_to_quarter(
         snapped_d,
         rotated=candidate.rotated,
         estimate=(candidate.length, candidate.width, candidate.depth),
+        tab_width=tab_width,
     )
     tolerance = MEDIUM_RMS if determined else SNAP_RMS_TOLERANCE
     if (
@@ -539,11 +831,21 @@ def _evaluate_candidate(
     *,
     rotated: bool,
     estimate: tuple[float, float, float] | None = None,
+    tab_width: float = float(DEFAULT_TAB_WIDTH_IN),
 ) -> SolveCandidate | None:
     if length <= 0 or width <= 0 or depth <= 0:
         return None
-    predicted = predict_blank(style, flute, joint, length, width, depth)
-    rms = _rms(measurements, predicted, rotated=rotated)
+    predicted = predict_blank(style, flute, joint, length, width, depth, tab_width=tab_width)
+    rms = _rms(
+        measurements,
+        predicted,
+        rotated=rotated,
+        joint=joint,
+        tab_width=tab_width,
+        style=style,
+        flute=flute,
+        depth=depth,
+    )
     if not math.isfinite(rms):
         return None
     est_dist = 0.0
@@ -601,6 +903,8 @@ def _candidate_sort_key(
 
 
 def _search_margin_for(style: StyleName, measurements: Measurements) -> float:
+    if _has_panel_primary(style, measurements):
+        return FLAP_SEARCH_MARGIN
     if style in ("rsc", "hsc") and measurements.flap_h is not None:
         return FLAP_SEARCH_MARGIN
     if measurements.panel_1 is not None:
@@ -612,7 +916,9 @@ def _search_margin_for(style: StyleName, measurements: Measurements) -> float:
 
 def _prefer_quarter_ranking(measurements: Measurements, *, determined: bool) -> bool:
     return determined and (
-        measurements.flap_h is not None or measurements.panel_1 is not None
+        measurements.flap_h is not None
+        or measurements.panel_1 is not None
+        or measurements.panel_d is not None
     )
 
 
@@ -623,7 +929,8 @@ def _search_style(
     measurements: Measurements,
     *,
     underdetermined: bool,
-) -> SolveCandidate | None:
+    tab_width: float,
+) -> tuple[SolveCandidate | None, list[SolveCandidate]]:
     candidates: list[SolveCandidate] = []
     margin = _search_margin_for(style, measurements)
     orientations = (False,) if underdetermined else (False, True)
@@ -631,7 +938,8 @@ def _search_style(
 
     for rotated in orientations:
         l_rng, w_rng, d_rng = _estimate_ranges(
-            style, flute, measurements, rotated=rotated, search_margin=margin
+            style, flute, measurements, rotated=rotated, search_margin=margin,
+            joint=joint, tab_width=tab_width,
         )
         estimate = (
             (l_rng[0] + l_rng[1]) / 2.0,
@@ -653,6 +961,7 @@ def _search_style(
                         depth,
                         rotated=rotated,
                         estimate=estimate,
+                        tab_width=tab_width,
                     )
                     if candidate is not None:
                         sixteenth_here.append(candidate)
@@ -682,6 +991,7 @@ def _search_style(
                         depth,
                         rotated=rotated,
                         estimate=estimate,
+                        tab_width=tab_width,
                     )
                     if (
                         candidate is not None
@@ -691,48 +1001,51 @@ def _search_style(
                         candidates.append(candidate)
 
     if not candidates:
-        return None
+        return None, []
     best = min(
         candidates,
         key=lambda c: _candidate_sort_key(
             c, underdetermined=underdetermined, prefer_quarter=prefer_quarter
         ),
     )
-    return _snap_to_quarter(
-        best, style, flute, joint, measurements, determined=not underdetermined
+    best = _snap_to_quarter(
+        best, style, flute, joint, measurements, determined=not underdetermined, tab_width=tab_width
     )
+    return best, candidates
 
 
 def solve_measurements(
     measurements: Measurements,
     *,
     flute: str,
-    joint: JointName = "taped",
+    joint: JointName = "glued",
     style: StyleName | None = None,
+    tab_width: float = float(DEFAULT_TAB_WIDTH_IN),
 ) -> SolveResult | None:
     """Recover inside dimensions from noisy flat-blank measurements."""
     scoring_key = normalize_scoring_flute(flute)
     if scoring_key is None or scoring_key not in RSC_0201_TAPED:
         return None
 
-    if style is not None:
-        error = validate_measurements(style, measurements)
-        if error is not None:
-            return None
+    input_error = validate_measurements(style, measurements)
+    if input_error is not None:
+        return None
 
     styles: tuple[StyleName, ...] = (style,) if style else ALL_STYLES
-    ranked: list[tuple[SolveCandidate, bool]] = []
+    ranked: list[tuple[SolveCandidate, bool, list[SolveCandidate]]] = []
     for candidate_style in styles:
         determined = _is_determined(candidate_style, measurements)
-        found = _search_style(
+        style_joint: JointName = "taped" if candidate_style == "tube" else joint
+        found, pool = _search_style(
             candidate_style,
             flute,
-            joint,
+            style_joint,
             measurements,
             underdetermined=not determined,
+            tab_width=tab_width,
         )
         if found is not None:
-            ranked.append((found, determined))
+            ranked.append((found, determined, pool))
 
     if not ranked:
         return None
@@ -744,10 +1057,10 @@ def solve_measurements(
             prefer_quarter=_prefer_quarter_ranking(measurements, determined=item[1]),
         )
     )
-    best, best_determined = ranked[0]
+    best, best_determined, best_pool = ranked[0]
     runner_up: dict[str, Any] | None = None
     if style is None and len(ranked) > 1:
-        second, _ = ranked[1]
+        second, _, _ = ranked[1]
         runner_up = {
             "style": second.style,
             "rms_error_in": round(second.rms_error_in, 6),
@@ -760,11 +1073,42 @@ def solve_measurements(
     suggested_input: str | None = None
     if not best_determined:
         reason, suggested_input = _ambiguity_message(best.style)
+    elif _should_check_near_tie(best.style, measurements, determined=best_determined):
+        near_reason, near_suggested = _near_tie_ambiguity(best_pool, best)
+        if near_reason is not None:
+            reason = near_reason
+            suggested_input = near_suggested
+
+    result_joint: JointName = "taped" if best.style == "tube" else joint
+    confidence = _final_confidence(best.rms_error_in, determined=best_determined)
+    if not best_determined:
+        confidence = "ambiguous"
+    elif reason == NEAR_TIE_REASON:
+        confidence = "ambiguous"
+
+    warning: str | None = None
+    mismatch = _consistency_mismatch(
+        best.style,
+        flute,
+        result_joint,
+        measurements,
+        best.length,
+        best.width,
+        best.depth,
+        tab_width=tab_width,
+    )
+    if mismatch is not None and mismatch > INCONSISTENCY_SUM_THRESHOLD:
+        warning = INCONSISTENCY_WARNING
+        confidence = _cap_confidence(confidence, "medium")
+
+    outside_L, outside_W, outside_D = outside_dimensions_from_id(
+        best.length, best.width, best.depth, flute
+    )
 
     return SolveResult(
         style=best.style,
         flute=flute,
-        joint=joint,
+        joint=result_joint,
         length=best.length,
         width=best.width,
         depth=best.depth,
@@ -773,11 +1117,16 @@ def solve_measurements(
         predicted_scores_x=best.predicted.scores_x,
         predicted_scores_y=best.predicted.scores_y,
         rms_error_in=best.rms_error_in,
-        confidence=_final_confidence(best.rms_error_in, determined=best_determined),
+        confidence=confidence,
         rotated=best.rotated,
         reason=reason,
         suggested_input=suggested_input,
         runner_up=runner_up,
+        tab_width=tab_width,
+        warning=warning,
+        outside_L=outside_L,
+        outside_W=outside_W,
+        outside_D=outside_D,
     )
 
 
@@ -788,13 +1137,21 @@ def predict_for_spec(
     length: float,
     width: float,
     depth: float,
+    *,
+    tab_width: float = float(DEFAULT_TAB_WIDTH_IN),
 ) -> dict[str, Any]:
     """Helper for tests — expose expected measurements for a known spec."""
-    predicted = predict_blank(style, flute, joint, length, width, depth)
-    return {
+    predicted = predict_blank(style, flute, joint, length, width, depth, tab_width=tab_width)
+    result = {
         "blank_w": predicted.blank_w,
         "blank_h": predicted.blank_h,
         "scores_x": predicted.scores_x,
         "scores_y": predicted.scores_y,
         "panels_x": predicted.panels_x,
     }
+    if style in ("rsc", "hsc"):
+        result["panel_d"] = _predicted_panel_d(style, flute, depth)
+    if len(predicted.panels_x) >= 2:
+        result["panel_1"] = predicted.panels_x[0]
+        result["panel_2"] = predicted.panels_x[1]
+    return result

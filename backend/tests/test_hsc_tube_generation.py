@@ -106,12 +106,13 @@ def test_tube_solve_generate_round_trip():
     expected = predict_for_spec("tube", "C", "taped", 14, 10, 4)
     solved = solve_measurements(
         Measurements(
-            blank_w=expected["blank_w"],
             blank_h=expected["blank_h"],
-            scores_x=expected["scores_x"],
+            panel_1=expected["panel_1"],
+            panel_2=expected["panel_2"],
         ),
         flute="C",
         style="tube",
+        joint="taped",
     )
     assert solved is not None
     assert solved.confidence in ("high", "medium")

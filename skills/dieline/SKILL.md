@@ -1,67 +1,137 @@
 ---
 name: dieline
-description: Generate production-ready FEFCO corrugated dielines (DXF/SVG) using the `dieline` CLI. Use this skill whenever the user asks for a dieline, box template, RSC, 0201, corrugated box, carton, case, "cut and score" file, DXF or SVG for packaging, or gives box dimensions (L×W×D) and wants a file — even if they don't say the word "dieline." Also use it to sanity-check dimensions or flute choices before generating.
+description: Generate and reverse-engineer production-ready corrugated dielines (DXF/SVG) using the `dieline` CLI. Use this skill whenever the user asks for a dieline, box template, RSC, 0201, HSC, half slotted, tube, taped tube, TT, stitched tube, ST, sleeve, wrap, liner, KDF, corrugated box, carton, case, "cut and score" file, or DXF/SVG for packaging — OR when the user has a physical box sample (often described as "torn open", "flattened", "a blank", "a sample") with rough measurements and wants to know its spec or price it. Trigger even when nobody says "dieline": box dimensions like "12x9x4 C-flute" and sample descriptions like "the blank is about 42 by 13 with a 4-inch flap" both belong here.
 ---
 
-# Dieline Generator
+# Dieline Generator & Sample Solver
 
-Generates FEFCO-standard corrugated dielines as DXF or SVG via a command-line tool. v1 supports style **0201 (RSC)** only. If asked for any other style, say it isn't supported yet rather than approximating with 0201.
+Two tools behind one command, backed by scoring-allowance tables extracted from two
+industry manuals (see `references/scoring-allowances.md` — that file is the ground
+truth for all allowance math; never invent or approximate allowances).
 
-## How to run
+- **`dieline generate`** — the user already knows the spec (style, L×W×D, flute)
+  and wants a file.
+- **`dieline solve`** — the user has a physical sample or measurements and wants
+  the spec recovered (optionally generating the file too with `--generate`).
+
+Supported styles: **RSC (0201)**, **HSC**, and **tube**. Anything else: say it
+isn't supported yet rather than approximating (see Known limits).
+
+## Generating — when the spec is known
 
 ```
-uv run dieline generate --style 0201 --l <length> --w <width> --d <depth> --flute <B|C|E|BC> --units <in|mm> --out <path.dxf|path.svg>
+uv run dieline generate --style <0201|hsc|tube> --l <length> --w <width> --d <depth> \
+  --flute <B|C|BC> --units <in|mm> [--joint taped|glued] --out <path.dxf|path.svg>
 ```
 
-Run from the repo root (`E:\hood-box-designer`). Full flag reference: `uv run dieline generate --help`.
+- Style aliases accepted: `rsc` → 0201; `tt`, `st`, `sleeve`, `wrap` → tube.
+- Dimensions are always **inside dimensions**, order L × W × D, with **L ≥ W** by
+  convention. If the user gives three unlabeled numbers, confirm which is depth —
+  never silently assume.
+- `--joint` defaults to `glued` (1.5″ tab). `taped` has no tab.
+- Flutes with scoring data: **B, C, BC** (BC = doublewall). Requesting another
+  flute on a table-driven style produces a clear error — relay it; do not retry
+  with a substituted flute.
+- Output format is inferred from the `--out` extension (.dxf or .svg).
+- On success the tool prints the absolute path of the written file — report that
+  path to the user. On failure it prints a one-line error to stderr and exits
+  nonzero — relay the error; do not retry with guessed values.
 
-- Dimensions are always **inside dimensions** in the order L × W × D (confirmed from the underlying `BoxSpec` schema: length/width/height are documented as "Inside length/width/height").
-- `--flute` selects a board caliper (thickness) from a lookup table, not just a label. See "Flute caliper values" below — **these are placeholders**, not your real board specs.
-- On success the tool prints the absolute path of the written file, and nothing else. Report that path to the user.
-- On failure it prints one line to stderr and exits nonzero. Relay the error; do not retry with guessed values.
-- The CLI does **not** print blank size, panel dims, or other derived numbers — only the output path. If the user needs the blank size, open the file or ask; don't guess (see "After generating" below for how to get it).
+## Solving — when the user has a sample or measurements
+
+```
+uv run dieline solve --flute <B|C|BC> [--style rsc|hsc|tube] \
+  --blank-w <in> --blank-h <in> [--flap-h <in>] [--panel-1 <in>] \
+  [--scores-x a,b,c] [--scores-y a,b] [--joint taped|glued] [--tab-width IN]
+  [--blank-w-excludes-tab] [--generate]
+```
+
+Identifying the style from the sample (glance-level questions the user can answer):
+- Flaps on **both** long edges of the blank → `rsc`
+- Flaps on **one** edge only → `hsc`
+- **No flaps** → ask: *"Is there a taped or stitched seam anywhere?"*
+  Yes → `tube`. No → it's a **liner** — solve it as `tube` (blanks are
+  dimensionally identical) but label the result "liner" when reporting.
+  If style is omitted entirely, the solver ranks all three and reports a
+  `runner_up`.
+
+Minimum inputs for a fully determined answer:
+- All styles: `--blank-w`, `--blank-h`, `--flute`
+- RSC / HSC: **plus** `--flap-h` (distance from the blank's edge to the first
+  horizontal crease — the flap) *or* `--panel-1`
+- Tube: **plus** `--panel-1` (distance from the blank's edge to the first
+  vertical crease). `--flap-h` is invalid for tube.
+More inputs (`--scores-x`, `--scores-y`, `--panels-x`) tighten the fit.
+Measurements are treated as noisy tape-measure values; the solver snaps to
+1/16″ (preferring ¼″ specs) — do not pre-round or "correct" the user's numbers.
+
+Output is one JSON object: style, flute, joint, L/W/D, predicted blank and score
+positions, `rms_error_in`, `confidence`, and `runner_up` / `suggested_input`
+when relevant. With `--generate`, a file is also produced at medium/high
+confidence and its path printed after the JSON.
+
+### Acting on confidence — required behavior
+
+- **high / medium** — trust the result. Report the spec plainly ("That's a
+  12 × 9 × 4 RSC, C-flute, taped") and offer/produce the file.
+- **ambiguous** — the measurements were mathematically insufficient (e.g. blank
+  size alone: 2 equations, 3 unknowns). The JSON includes `suggested_input`.
+  Ask the user for exactly that one measurement, then re-run. Do not present
+  the returned representative dimensions as an answer.
+- **low** — poor fit; the sample may be a style we don't support or the numbers
+  are inconsistent. Say so, hand the user everything gathered (measurements,
+  best guess, runner-up) and recommend routing to a designer. Never force a fit.
 
 ## Before generating — checks to run every time
 
-1. **Confirm the dimension order.** If the user gives three numbers with no labels, confirm which is depth. Never silently assume.
-2. **Flute sanity.** <!-- TODO(owner): your rules, e.g. "Default to C-flute for shippers unless told otherwise. E-flute only for retail/print-heavy. Never BC under 6in depth." -->
-3. **Size limits.** <!-- TODO(owner): min/max panel sizes your vendors/equipment accept, e.g. "Flag anything with a blank over ___ × ___ — exceeds sheet size at ___." -->
-4. **Board grade vs. weight.** <!-- TODO(owner): when to warn, e.g. "If contents weight is mentioned and exceeds ___ lb for C-flute, suggest ___." -->
+1. **Dimension order.** Unlabeled numbers → confirm which is depth.
+2. **Inside vs outside.** Dimensions are inside. If the user measured a product
+   (not a box), the box ID must exceed the product — flag if they seem equal.
+   <!-- TODO(owner): standard product-to-ID clearance, if the shop has one. -->
+3. **Flute.** No default guessing when the user names a flute we lack data for —
+   error honestly. When the user gives no flute at all, ask; C is the most
+   common shipper but confirm rather than assume.
+4. **Size limits.** <!-- TODO(owner): min/max blank your vendors/equipment accept,
+   e.g. "flag blanks over ___ × ___". -->
+5. **Board grade vs weight.** <!-- TODO(owner): when to warn, e.g. "contents over
+   ___ lb on C-flute → suggest BC". -->
 
-## Flute caliper values (placeholder — TODO(owner))
+## Conventions (house rules)
 
-`--flute` maps to caliper via `backend/dieline_core/flutes.py`. Current values (generic, commonly-cited nominal figures, **not** confirmed against real board specs):
-
-| Flute | Caliper (in) | Caliper (mm) |
-|-------|--------------|--------------|
-| B     | 0.098        | 2.5          |
-| C     | 0.140        | 3.6          |
-| E     | 0.060        | 1.5          |
-| BC    | 0.238        | 6.1          |
-
-<!-- TODO(owner): replace with your mill/supplier's actual calipers, then update backend/dieline_core/flutes.py to match. Until then, treat any CLI-generated box as a rough-caliper draft, not production-ready. -->
-
-## Conventions (the house rules)
-
-<!-- TODO(owner): This section is the moat. Write the corrections you'd give a junior designer. Examples of the kind of rule that belongs here: -->
-
-- **Glue tab:** Default width is 1.25in (32mm), applied on the left edge of panel 1 (the tool has no `--glue-tab` flag yet — it's always the default). <!-- TODO(owner): confirm this default is right for your standard shippers, and specify inside vs. outside glue / bevel angle — not encoded in the geometry, it's an assembly-time convention. -->
-- **Flute/caliper allowances:** The CLI already applies caliper compensation to every panel and flap (each panel = nominal dim + caliper; flap depth = (width + caliper) / 2). No manual adjustment is needed on top of what `--flute` selects.
-- **Slot widths:** Auto-computed as `max(0.25in, 2 × caliper)` in inches (`max(6mm, 2 × caliper)` in mm) — there's no `--slot` flag yet, so this always applies. <!-- TODO(owner): confirm this default slot formula matches your press/rule requirements. -->
-- **Flap gap:** Top and bottom flaps are each exactly half of (width + caliper) — they meet with no intentional gap or overlap (this is a standard RSC split, not FOL). <!-- TODO(owner): flag if a specific job needs a manufacturing gap allowance instead — not currently supported, would need a new flag. -->
-- **Grain/flute direction:** <!-- TODO(owner): e.g. "Flutes always vertical (parallel to depth) — if the layout implies otherwise, stop and ask." -->
-- **Layer/line conventions in output:** Cut lines = layer `CUT` (AutoCAD color 1 / red, `#dc2626` in SVG). Score/crease lines = layer `CREASE` (AutoCAD color 3 / green, `#16a34a`, dashed `DASHED` linetype in DXF, dashed stroke in SVG). This is fixed by the tool, not configurable. <!-- TODO(owner): note if a vendor requires different layer names/colors — would need a new flag, not currently supported. -->
+- All allowance math is **table-driven** from `references/scoring-allowances.md`.
+  If a needed value isn't in that file, stop and say so — never derive allowances
+  from caliper or invent them.
+- **Glue/stitch tab defaults to 1.5″**; a designer may override per job (`--tab-width`);
+  always state the tab width used when reporting a glued spec. Taped joints have no tab.
+  Glued is the default.
+- **L ≥ W** always; depth is the flap-direction dimension.
+- Flute affects allowances *and* caliper (slot width, fillet radius). Calipers:
+  B 0.125″, C 0.1563″, BC 0.2813″.
+- A no-flap sample without a seam is a **liner**, not a tube — same solved
+  dimensions, different label; liner *generation* (with box-ID clearances) is
+  not implemented yet.
+- Layer/line conventions in output: <!-- TODO(owner): e.g. cut = layer CUT (red),
+  crease = layer CREASE (blue); vendor-specific requirements. -->
 
 ## After generating
 
 1. Report the output file path.
-2. State the blank size (flat sheet dimensions) so the user can check it against sheet stock. The CLI doesn't print this — compute it as `blank width = L + W + L + W + glue_tab + 2×caliper` and `blank height = D + flap_top + flap_bottom + 2×caliper` (roughly; flap depths follow the formulas above), or open the DXF/SVG and read its bounding box.
-3. If anything in the request contradicted a house rule above, say what you flagged and what you did about it.
+2. State the blank (flat sheet) size so the user can check it against sheet
+   stock — the CLI's predicted blank for solves, or compute from the tables
+   for generates.
+3. If anything in the request contradicted a house rule above, say what you
+   flagged and what you did about it.
 
-## Known limits (v1)
+## Known limits
 
-- 0201 RSC only. No FOL, HSC, die-cut mailers, trays, or partitions yet.
+- Styles: **RSC (0201), HSC, tube only.** No FOL/full-overlap, CSSC, telescopes,
+  folders, die-cut mailers, trays, or partitions yet — decline and say which
+  styles are supported instead of approximating.
+- **Liner generation** not implemented (solving as tube is fine). Reject with
+  the CLI's message if asked; the box-ID clearance math is documented in the
+  reference file for when it's built.
+- Flutes: B, C, BC only for table-driven styles (no A or E scoring data).
 - No nesting/layout — one blank per file.
-- Only B, C, E, BC flutes supported, and their calipers are unconfirmed placeholders (see above).
-- No flags yet for glue tab width, slot width, fillet radius, or overlap — all use the tool's built-in defaults.
+- Solver assumes taped-joint tables; a glued sample's tab is handled via
+  `--joint glued`.
 - <!-- TODO(owner): anything else the agent should refuse or escalate. -->

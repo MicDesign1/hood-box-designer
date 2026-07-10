@@ -2,9 +2,9 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
-FefcoCode = Literal["0200", "0201", "0202", "0203", "0204", "0300", "0409", "0427", "0713"]
+FefcoCode = Literal["0200", "0201", "0202", "0203", "0204", "0300", "0409", "0427", "0713", "hsc", "tube"]
 
-IMPLEMENTED_FEFCO_CODES: set[str] = {"0200", "0201", "0202", "0203", "0713"}
+IMPLEMENTED_FEFCO_CODES: set[str] = {"0200", "0201", "0202", "0203", "0713", "hsc", "tube"}
 
 Units = Literal["in", "mm"]
 FluteType = Literal["A", "B", "C", "E", "F", "BC", "EB"]
@@ -44,8 +44,13 @@ class BoxSpec(BaseModel):
         description="Flute type for scoring allowances (0201) and caliper lookup.",
     )
     joint: Literal["taped", "glued"] | None = Field(
+        default="glued",
+        description="Manufacturer's joint for table-driven styles: glued (default tab) or taped (no tab).",
+    )
+    tab_width: float | None = Field(
         default=None,
-        description="Manufacturer's joint for 0201: taped (no tab) or glued (1.5 in tab).",
+        gt=0,
+        description="Glue tab width for glued joints, inches (default 1.5).",
     )
 
 

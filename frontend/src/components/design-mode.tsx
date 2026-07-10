@@ -32,8 +32,7 @@ import {
   parseImperialInput,
   type DimensionFormat,
 } from "@/lib/imperial";
-import { DielinePreview } from "@/components/dieline-preview";
-import { DerivedScoresTable } from "@/components/derived-scores-table";
+import { DielinePreviewPanel } from "@/components/dieline-preview-panel";
 import {
   FEFCO_STYLES,
   JOINT_OPTIONS,
@@ -98,9 +97,6 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isExportingDxf, setIsExportingDxf] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showCuts, setShowCuts] = useState(true);
-  const [showCreases, setShowCreases] = useState(true);
-  const [showLabels, setShowLabels] = useState(true);
 
   const styleIsAvailable = isFefcoStyleAvailable(spec.style);
   const isRsc = spec.style === "0201";
@@ -224,7 +220,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                       ...current,
                       style,
                       fluteType: current.fluteType ?? "C",
-                      joint: current.joint ?? "taped",
+                      joint: current.joint ?? "glued",
                     };
                   }
                   return { ...current, style };
@@ -331,7 +327,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
               <div className="space-y-2">
                 <Label htmlFor="joint-type">Joint</Label>
                 <Select
-                  value={spec.joint ?? "taped"}
+                  value={spec.joint ?? "glued"}
                   onValueChange={(value) =>
                     setSpec((current) => ({
                       ...current,
@@ -387,90 +383,19 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
       </Card>
 
       <div className="flex min-w-0 flex-col gap-4">
-        <Card className="flex flex-1 flex-col">
-          <CardHeader>
-            <CardTitle>Live Dieline Preview</CardTitle>
-            <CardDescription>
-              {styleIsAvailable
-                ? "Server-rendered layout with cut lines (red) and crease lines (green dashed)."
-                : "Placeholder preview from the backend while this style is in development."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-4">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Layers
-              </span>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="size-4 rounded border-input accent-primary"
-                  checked={showCuts}
-                  onChange={(event) => setShowCuts(event.target.checked)}
-                />
-                Cuts
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="size-4 rounded border-input accent-primary"
-                  checked={showCreases}
-                  onChange={(event) => setShowCreases(event.target.checked)}
-                />
-                Creases
-              </label>
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="size-4 rounded border-input accent-primary"
-                  checked={showLabels}
-                  onChange={(event) => setShowLabels(event.target.checked)}
-                />
-                Labels
-              </label>
-            </div>
-
-            <div className="relative min-h-[320px] flex-1 sm:min-h-[420px] lg:min-h-[520px]">
-              {isLoading ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-lg border bg-white text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Generating dieline…
-                </div>
-              ) : null}
-              {!isLoading && error ? (
-                <div className="flex h-full items-center justify-center rounded-lg border bg-white px-6 text-center text-sm text-destructive">
-                  {error}
-                </div>
-              ) : null}
-              {!isLoading && !error ? (
-                <DielinePreview
-                  geometry={geometry}
-                  showCuts={showCuts}
-                  showCreases={showCreases}
-                  showLabels={showLabels}
-                />
-              ) : null}
-            </div>
-
-            {previewMessage ? (
-              <p className="text-xs text-muted-foreground">{previewMessage}</p>
-            ) : null}
-
-            {warnings.length > 0 ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <p className="font-medium">Warnings</p>
-                <ul className="mt-1 list-disc space-y-1 pl-4">
-                  {warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {Object.keys(derived).length > 0 ? (
-              <DerivedScoresTable derived={derived} />
-            ) : null}
-
+        <DielinePreviewPanel
+          geometry={geometry}
+          isLoading={isLoading}
+          error={error}
+          previewMessage={previewMessage}
+          warnings={warnings}
+          derived={derived}
+          description={
+            styleIsAvailable
+              ? "Server-rendered layout with cut lines (red) and crease lines (green dashed)."
+              : "Placeholder preview from the backend while this style is in development."
+          }
+          footer={
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
                 {formatDimensionSummary(
@@ -478,7 +403,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                   spec.width,
                   spec.height,
                   isRsc
-                    ? `${spec.fluteType ?? "C"}-flute · ${spec.joint ?? "taped"} joint`
+                    ? `${spec.fluteType ?? "C"}-flute · ${spec.joint ?? "glued"} joint`
                     : `Board ${formatInches(spec.caliper, dimensionFormat, 4)} in`,
                   dimensionFormat,
                 )}
@@ -503,8 +428,8 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                 </Button>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          }
+        />
 
         <p className="text-center text-xs text-muted-foreground sm:text-sm">
           Preview and exports are generated server-side with FEFCO-aware flap, slot, and

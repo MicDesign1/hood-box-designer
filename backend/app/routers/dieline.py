@@ -10,7 +10,9 @@ from app.models.box_spec import (
     GeometryPayload,
     LabelMarkPayload,
 )
+from app.models.solve import SolveRequest, SolveResponse
 from app.services.dieline_generator import ArcSegment, generate_dieline_dxf, generate_dieline_svg
+from app.services.solve import solve_from_request
 
 router = APIRouter(prefix="/api/dieline", tags=["dieline"])
 
@@ -57,6 +59,14 @@ def generate_dieline(spec: BoxSpec) -> DielineGenerateResponse:
         warnings=warnings,
         derived=derived,
     )
+
+
+@router.post("/solve", response_model=SolveResponse)
+def solve_dieline(request: SolveRequest) -> SolveResponse:
+    try:
+        return solve_from_request(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/export/dxf")

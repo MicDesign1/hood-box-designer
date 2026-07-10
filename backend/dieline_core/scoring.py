@@ -16,7 +16,9 @@ SCORING_FLUTE_ALIASES: dict[str, str] = {
 
 RSC_0201_SCORING_FLUTES = ("B", "C", "DW")
 
-GLUE_TAB_IN = Fraction(3, 2)  # 1½″ per scoring-allowances.md (Stitch/Glue Inside)
+DEFAULT_TAB_WIDTH_IN = Fraction(3, 2)  # 1½″ shop standard (Stitch/Glue Inside)
+GLUE_TAB_IN = DEFAULT_TAB_WIDTH_IN  # alias for existing imports
+DEFAULT_JOINT: str = "glued"
 
 @dataclass(frozen=True)
 class RscTapedAllowances:
@@ -121,10 +123,24 @@ def fraction_to_unit(frac: Fraction, unit: str) -> float:
     return inches if unit == "in" else inches * 25.4
 
 
-def glue_tab_for_joint(joint: str, unit: str) -> float:
+def glue_tab_for_joint(
+    joint: str,
+    unit: str,
+    tab_width_in: float | Fraction | None = None,
+) -> float:
+    if joint != "glued":
+        return 0.0
+    inches = float(tab_width_in if tab_width_in is not None else DEFAULT_TAB_WIDTH_IN)
+    return inches if unit == "in" else inches * 25.4
+
+
+def joint_spec_label(joint: str, tab_width_in: float | None = None) -> str:
+    """Plain-language joint line for specs and JSON."""
     if joint == "glued":
-        return float(GLUE_TAB_IN) if unit == "in" else float(GLUE_TAB_IN) * 25.4
-    return 0.0
+        tab = tab_width_in if tab_width_in is not None else float(DEFAULT_TAB_WIDTH_IN)
+        tab_text = f'{tab:g}"' if tab == round(tab) else f"{tab:g}"
+        return f'glued joint, {tab_text} tab (standard — adjust in Artios if needed)'
+    return "taped joint"
 
 
 def scoring_flute_error(flute: str, style: str) -> str:
@@ -141,3 +157,40 @@ def rsc_0201_taped_allowances(flute: str) -> RscTapedAllowances:
         supported = ", ".join(RSC_0201_SCORING_FLUTES)
         raise KeyError(f"unsupported scoring flute '{flute}' (supported: {supported})")
     return RSC_0201_TAPED[key]
+
+
+def wcc_panel_adders(flute: str) -> tuple[Fraction, Fraction, Fraction, Fraction]:
+    """WCC panel sequence adders: L | W | L | W."""
+    return rsc_0201_taped_allowances(flute).wcc_panel_adds
+
+
+def acc_depth_panel_add(style: str, flute: str) -> Fraction:
+    """ACC middle depth panel (crease-to-crease), inches."""
+    key = normalize_scoring_flute(flute) or ""
+    if style == "hsc":
+        return HSC_0200_TAPED[key].depth_add
+    return RSC_0201_TAPED[key].depth_add
+
+
+# ID → OD adders from scoring-allowances.md quick-reference (RSC D+ column for depth).
+ID_TO_OD_ADDERS: dict[str, dict[str, Fraction]] = {
+    "B": {"L": Fraction(1, 4), "W": Fraction(1, 4), "D": Fraction(5, 8)},
+    "C": {"L": Fraction(3, 8), "W": Fraction(3, 8), "D": Fraction(3, 4)},
+    "DW": {"L": Fraction(5, 8), "W": Fraction(5, 8), "D": Fraction(5, 4)},
+}
+
+
+def outside_dimensions_from_id(
+    length: float,
+    width: float,
+    depth: float,
+    flute: str,
+) -> tuple[float, float, float]:
+    """Estimated assembled outside L × W × D from inside dimensions."""
+    key = normalize_scoring_flute(flute) or "C"
+    row = ID_TO_OD_ADDERS[key]
+    return (
+        length + float(row["L"]),
+        width + float(row["W"]),
+        depth + float(row["D"]),
+    )
