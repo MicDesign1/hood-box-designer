@@ -31,12 +31,16 @@ def _noisy_measurements(
 ) -> Measurements:
     expected = predict_for_spec(style, flute, "taped", length, width, depth)
     rng = random.Random(seed)
+    if style == "tube":
+        return Measurements(
+            blank_h=_perturb(expected["blank_h"], rng),
+            panel_1=_perturb(expected["panel_1"], rng),
+            panel_2=_perturb(expected["panel_2"], rng),
+        )
     return Measurements(
-        blank_w=_perturb(expected["blank_w"], rng),
-        blank_h=_perturb(expected["blank_h"], rng),
-        scores_x=tuple(_perturb(v, rng) for v in expected["scores_x"]) if include_scores else None,
-        scores_y=tuple(_perturb(v, rng) for v in expected["scores_y"]) if include_scores else None,
-        panels_x=None,
+        panel_d=_perturb(expected["panel_d"], rng),
+        panel_1=_perturb(expected["panel_1"], rng),
+        panel_2=_perturb(expected["panel_2"], rng),
     )
 
 
@@ -45,6 +49,7 @@ def test_solver_rsc_round_trip_noisy():
         _noisy_measurements("rsc", "C", 12, 9, 4, seed=42),
         flute="C",
         style="rsc",
+        joint="taped",
     )
     assert result is not None
     assert result.style == "rsc"
@@ -59,6 +64,7 @@ def test_solver_hsc_round_trip_noisy():
         _noisy_measurements("hsc", "C", 10, 8, 6, seed=7),
         flute="C",
         style="hsc",
+        joint="taped",
     )
     assert result is not None
     assert result.style == "hsc"
@@ -73,6 +79,7 @@ def test_solver_tube_round_trip_noisy():
         _noisy_measurements("tube", "C", 14, 10, 4, seed=99),
         flute="C",
         style="tube",
+        joint="taped",
     )
     assert result is not None
     assert result.style == "tube"
@@ -88,6 +95,7 @@ def test_solver_rsc_blank_only_is_ambiguous():
         Measurements(blank_w=expected["blank_w"], blank_h=expected["blank_h"]),
         flute="C",
         style="rsc",
+        joint="taped",
     )
     assert result is not None
     assert result.confidence == "ambiguous"
@@ -96,10 +104,19 @@ def test_solver_rsc_blank_only_is_ambiguous():
 
 
 def test_solver_rsc_from_flap_h_noisy():
+    expected = predict_for_spec("rsc", "C", "taped", 12, 9, 4)
     result = solve_measurements(
-        Measurements(blank_w=42.75, blank_h=13.5, flap_h=4.6),
+        Measurements(
+            panel_d=expected["panel_d"],
+            panel_1=expected["panel_1"],
+            panel_2=expected["panel_2"],
+            blank_w=42.75,
+            blank_h=13.5,
+            flap_h=4.6,
+        ),
         flute="C",
         style="rsc",
+        joint="taped",
     )
     assert result is not None
     assert result.length == pytest.approx(12)
@@ -110,15 +127,15 @@ def test_solver_rsc_from_flap_h_noisy():
 
 def test_solver_tube_from_panel_1_noisy():
     expected = predict_for_spec("tube", "C", "taped", 14, 10, 4)
-    panel_1 = expected["scores_x"][0] + 0.06
     result = solve_measurements(
         Measurements(
-            blank_w=expected["blank_w"] + 0.07,
             blank_h=expected["blank_h"] - 0.05,
-            panel_1=panel_1,
+            panel_1=expected["panel_1"] + 0.06,
+            panel_2=expected["panel_2"] - 0.04,
         ),
         flute="C",
         style="tube",
+        joint="taped",
     )
     assert result is not None
     assert result.length == pytest.approx(14)
@@ -133,6 +150,7 @@ def test_solver_tube_blank_only_is_ambiguous():
         Measurements(blank_w=expected["blank_w"], blank_h=expected["blank_h"]),
         flute="C",
         style="tube",
+        joint="taped",
     )
     assert result is not None
     assert result.confidence == "ambiguous"
@@ -155,6 +173,7 @@ def test_solver_garbage_blank_only_is_ambiguous_and_plausible():
         Measurements(blank_w=40.0, blank_h=20.0),
         flute="C",
         style="rsc",
+        joint="taped",
     )
     assert result is not None
     assert result.confidence == "ambiguous"
@@ -170,6 +189,7 @@ def test_solver_tube_ranks_above_rsc_when_style_omitted():
             scores_x=expected["scores_x"],
         ),
         flute="C",
+        joint="taped",
     )
     assert result is not None
     assert result.style == "tube"

@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { Camera, Ruler as RulerIcon, Package } from "lucide-react";
+import { Camera, ClipboardList, Ruler as RulerIcon, Package } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { DesignMode } from "@/components/design-mode";
 import { PhotoMode } from "@/components/photo-mode";
+import { cn } from "@/lib/utils";
 import { DEFAULT_BOX_SPEC, type BoxSpec } from "@/types/box";
 
 type Mode = "design" | "photo";
@@ -37,7 +39,15 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="ml-auto flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Link
+              href="/sample"
+              className={cn(buttonVariants({ size: "sm", variant: "outline" }), "gap-1.5")}
+            >
+              <ClipboardList />
+              Price a Sample
+            </Link>
+            <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
             <Button
               size="sm"
               variant={mode === "design" ? "default" : "ghost"}
@@ -54,6 +64,7 @@ export default function HomePage() {
               <Camera />
               Photo Input
             </Button>
+            </div>
           </div>
         </div>
       </header>

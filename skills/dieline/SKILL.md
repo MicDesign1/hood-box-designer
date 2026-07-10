@@ -28,7 +28,7 @@ uv run dieline generate --style <0201|hsc|tube> --l <length> --w <width> --d <de
 - Dimensions are always **inside dimensions**, order L × W × D, with **L ≥ W** by
   convention. If the user gives three unlabeled numbers, confirm which is depth —
   never silently assume.
-- `--joint` defaults to `taped` (no tab). `glued` adds a **1.5″ manufacturer's tab**.
+- `--joint` defaults to `glued` (1.5″ tab). `taped` has no tab.
 - Flutes with scoring data: **B, C, BC** (BC = doublewall). Requesting another
   flute on a table-driven style produces a clear error — relay it; do not retry
   with a substituted flute.
@@ -42,7 +42,8 @@ uv run dieline generate --style <0201|hsc|tube> --l <length> --w <width> --d <de
 ```
 uv run dieline solve --flute <B|C|BC> [--style rsc|hsc|tube] \
   --blank-w <in> --blank-h <in> [--flap-h <in>] [--panel-1 <in>] \
-  [--scores-x a,b,c] [--scores-y a,b] [--joint taped|glued] [--generate]
+  [--scores-x a,b,c] [--scores-y a,b] [--joint taped|glued] [--tab-width IN]
+  [--blank-w-excludes-tab] [--generate]
 ```
 
 Identifying the style from the sample (glance-level questions the user can answer):
@@ -100,7 +101,9 @@ confidence and its path printed after the JSON.
 - All allowance math is **table-driven** from `references/scoring-allowances.md`.
   If a needed value isn't in that file, stop and say so — never derive allowances
   from caliper or invent them.
-- **Glue/stitch tab: 1.5″**, taped joints have none. Taped is the default.
+- **Glue/stitch tab defaults to 1.5″**; a designer may override per job (`--tab-width`);
+  always state the tab width used when reporting a glued spec. Taped joints have no tab.
+  Glued is the default.
 - **L ≥ W** always; depth is the flap-direction dimension.
 - Flute affects allowances *and* caliper (slot width, fillet radius). Calipers:
   B 0.125″, C 0.1563″, BC 0.2813″.

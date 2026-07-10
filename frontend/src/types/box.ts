@@ -7,7 +7,9 @@ export type FefcoStyle =
   | "0300"
   | "0409"
   | "0427"
-  | "0713";
+  | "0713"
+  | "hsc"
+  | "tube";
 
 export type RscFluteType = "B" | "C" | "BC";
 
@@ -38,8 +40,8 @@ export const RSC_FLUTE_OPTIONS: { value: RscFluteType; label: string }[] = [
 ];
 
 export const JOINT_OPTIONS: { value: JointType; label: string }[] = [
-  { value: "taped", label: "Taped (no glue tab)" },
   { value: "glued", label: "Glued (1.5″ tab)" },
+  { value: "taped", label: "Taped (no glue tab)" },
 ];
 
 /** Nominal caliper (in) from scoring-allowances.md Quick-Reference. */
@@ -72,7 +74,7 @@ export const DEFAULT_BOX_SPEC: BoxSpec = {
   height: 6,
   caliper: FLUTE_CALIPER_IN.C,
   fluteType: "C",
-  joint: "taped",
+  joint: "glued",
 };
 
 export function getFefcoStyleLabel(code: FefcoStyle): string {

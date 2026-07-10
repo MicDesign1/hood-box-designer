@@ -171,12 +171,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.add_argument(
         "--joint",
-        default="taped",
+        default="glued",
         choices=["taped", "glued"],
         help=(
-            "Manufacturer's joint style. 'taped' (default) has no glue tab; "
-            "'glued' adds a 1.5 in glue tab per the scoring allowance reference."
+            "Manufacturer's joint style. 'glued' (default) adds a glue tab (see --tab-width); "
+            "'taped' has no tab."
         ),
+    )
+    generate.add_argument(
+        "--tab-width",
+        default=1.5,
+        type=float,
+        metavar="IN",
+        dest="tab_width",
+        help="Glue tab width for glued joints, inches (default 1.5).",
     )
     generate.add_argument(
         "--units",
@@ -220,12 +228,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     solve.add_argument(
         "--joint",
-        default="taped",
+        default="glued",
         choices=["taped", "glued"],
-        help="Manufacturer's joint (default taped; glued adds 1.5 in to expected width).",
+        help="Manufacturer's joint (default glued; taped has no glue tab).",
     )
-    solve.add_argument("--blank-w", required=True, type=float, metavar="IN", help="Overall blank width (in).")
-    solve.add_argument("--blank-h", required=True, type=float, metavar="IN", help="Overall blank height (in).")
+    solve.add_argument(
+        "--tab-width",
+        default=1.5,
+        type=float,
+        metavar="IN",
+        dest="tab_width",
+        help="Glue tab width for glued joints, inches (default 1.5).",
+    )
+    solve.add_argument(
+        "--blank-w-excludes-tab",
+        action="store_true",
+        dest="blank_w_excludes_tab",
+        help="With --joint glued: blank-w omits the tab (body width only).",
+    )
+    solve.add_argument("--blank-w", default=None, type=float, metavar="IN", help="Overall blank width (in), optional cross-check.")
+    solve.add_argument("--blank-h", default=None, type=float, metavar="IN", help="Overall blank height (in); tube D when using panel inputs.")
     solve.add_argument(
         "--scores-x",
         default=None,
@@ -260,10 +282,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         metavar="IN",
         dest="panel_1",
-        help=(
-            "Distance from the blank left edge to the first vertical score. "
-            "Required third measurement for tube; alternative to --flap-h for RSC/HSC."
-        ),
+        help="First WCC panel width, crease-to-crease from the non-tab end.",
+    )
+    solve.add_argument(
+        "--panel-2",
+        default=None,
+        type=float,
+        metavar="IN",
+        dest="panel_2",
+        help="Second WCC panel width, crease-to-crease.",
+    )
+    solve.add_argument(
+        "--panel-d",
+        default=None,
+        type=float,
+        metavar="IN",
+        dest="panel_d",
+        help="Middle ACC depth panel, crease-to-crease (RSC/HSC only).",
     )
     solve.add_argument(
         "--generate",
@@ -311,6 +346,9 @@ def _run_generate(args: argparse.Namespace) -> int:
     if suffix not in (".dxf", ".svg"):
         return _fail(f"--out must end in .dxf or .svg, got '{out_arg}'.")
 
+    if args.joint == "glued" and (not math.isfinite(args.tab_width) or args.tab_width <= 0):
+        return _fail("--tab-width must be a positive number.")
+
     caliper = caliper_for_flute(flute, args.units)
     scoring_flute = normalize_scoring_flute(flute)
     if scoring_flute not in RSC_0201_SCORING_FLUTES:
@@ -326,6 +364,8 @@ def _run_generate(args: argparse.Namespace) -> int:
         "joint": args.joint,
         "units": args.units,
     }
+    if args.joint == "glued":
+        payload["tab_width"] = args.tab_width
 
     result = build_dieline(payload)
     if not result.ok or not result.cuts:
@@ -359,16 +399,25 @@ def _run_solve(args: argparse.Namespace) -> int:
     if solve_style is not None and solve_style not in SOLVE_STYLES:
         return _fail(f"unsupported style '{args.style}' (supported: {', '.join(SOLVE_STYLES)}).")
 
-    if not math.isfinite(args.blank_w) or args.blank_w <= 0:
+    if args.blank_w is not None and (not math.isfinite(args.blank_w) or args.blank_w <= 0):
         return _fail("--blank-w must be a positive number.")
-    if not math.isfinite(args.blank_h) or args.blank_h <= 0:
+    if args.blank_h is not None and (not math.isfinite(args.blank_h) or args.blank_h <= 0):
         return _fail("--blank-h must be a positive number.")
     if args.flap_h is not None and (not math.isfinite(args.flap_h) or args.flap_h <= 0):
         return _fail("--flap-h must be a positive number.")
     if args.panel_1 is not None and (not math.isfinite(args.panel_1) or args.panel_1 <= 0):
         return _fail("--panel-1 must be a positive number.")
+    if args.panel_2 is not None and (not math.isfinite(args.panel_2) or args.panel_2 <= 0):
+        return _fail("--panel-2 must be a positive number.")
+    if args.panel_d is not None and (not math.isfinite(args.panel_d) or args.panel_d <= 0):
+        return _fail("--panel-d must be a positive number.")
     if solve_style == "tube" and args.flap_h is not None:
         return _fail(TUBE_FLAP_H_ERROR)
+    if solve_style == "tube" and args.panel_d is not None:
+        from dieline_core.solver import PANEL_D_TUBE_ERROR
+        return _fail(PANEL_D_TUBE_ERROR)
+    if args.joint == "glued" and (not math.isfinite(args.tab_width) or args.tab_width <= 0):
+        return _fail("--tab-width must be a positive number.")
 
     try:
         scores_x = _parse_float_list(args.scores_x, "--scores-x")
@@ -385,6 +434,9 @@ def _run_solve(args: argparse.Namespace) -> int:
         panels_x=panels_x,
         flap_h=args.flap_h,
         panel_1=args.panel_1,
+        panel_2=args.panel_2,
+        panel_d=args.panel_d,
+        blank_w_excludes_tab=args.blank_w_excludes_tab,
     )
 
     input_error = validate_measurements(solve_style, measurements)
@@ -396,6 +448,7 @@ def _run_solve(args: argparse.Namespace) -> int:
         flute=flute,
         joint=args.joint,
         style=solve_style,
+        tab_width=args.tab_width,
     )
     if result is None:
         return _fail("could not solve — no valid candidate for the given measurements.")
@@ -440,6 +493,9 @@ def _run_solve(args: argparse.Namespace) -> int:
             "joint": result.joint,
             "units": "in",
         }
+        if result.joint == "glued":
+            payload["tab_width"] = result.tab_width
+
         gen = build_dieline(payload)
         if not gen.ok or not gen.cuts:
             reason = "; ".join(gen.warnings) if gen.warnings else "could not build geometry."

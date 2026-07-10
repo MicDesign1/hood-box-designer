@@ -4,6 +4,12 @@ import type { DielineGeometry } from "@/types/geometry";
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
+/** Backend API path — same base URL as generate/export (NEXT_PUBLIC_API_URL). */
+export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${normalized}`;
+}
+
 export interface DielineGenerateResponse {
   svg: string;
   geometry: DielineGeometry | null;
@@ -24,6 +30,7 @@ export interface BoxSpecPayload {
   fillet_radius?: number;
   flute_type?: BoxSpec["fluteType"];
   joint?: BoxSpec["joint"];
+  tab_width?: number;
 }
 
 export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
@@ -37,7 +44,7 @@ export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
     ...(spec.filletRadius !== undefined ? { fillet_radius: spec.filletRadius } : {}),
   };
 
-  if (spec.style === "0201") {
+  if (spec.style === "0201" || spec.style === "hsc" || spec.style === "tube") {
     if (spec.fluteType) {
       payload.flute_type = spec.fluteType;
     }
@@ -49,11 +56,45 @@ export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
   return payload;
 }
 
+export async function fetchDielineSvgFromPayload(
+  payload: BoxSpecPayload,
+  signal?: AbortSignal,
+): Promise<DielineGenerateResponse> {
+  const response = await fetch(apiUrl("/api/dieline/generate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Dieline request failed (${response.status})`);
+  }
+
+  return response.json() as Promise<DielineGenerateResponse>;
+}
+
+export async function fetchDielineDxfFromPayload(payload: BoxSpecPayload): Promise<Blob> {
+  const response = await fetch(apiUrl("/api/dieline/export/dxf"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `DXF export failed (${response.status})`);
+  }
+
+  return response.blob();
+}
+
 export async function fetchDielineSvg(
   spec: BoxSpec,
   signal?: AbortSignal,
 ): Promise<DielineGenerateResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/dieline/generate`, {
+  const response = await fetch(apiUrl("/api/dieline/generate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(toBoxSpecPayload(spec)),
@@ -69,7 +110,7 @@ export async function fetchDielineSvg(
 }
 
 export async function fetchDielineDxf(spec: BoxSpec): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/api/dieline/export/dxf`, {
+  const response = await fetch(apiUrl("/api/dieline/export/dxf"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(toBoxSpecPayload(spec)),
@@ -83,11 +124,30 @@ export async function fetchDielineDxf(spec: BoxSpec): Promise<Blob> {
   return response.blob();
 }
 
+function buildFilenameFromPayload(
+  payload: BoxSpecPayload,
+  extension: "svg" | "dxf",
+): string {
+  const length = formatDecimalInches(payload.length);
+  const width = formatDecimalInches(payload.width);
+  const height = formatDecimalInches(payload.height);
+  return `dieline-${payload.fefco_code}-${length}x${width}x${height}in.${extension}`;
+}
+
 function buildFilename(spec: BoxSpec, extension: "svg" | "dxf"): string {
   const length = formatDecimalInches(spec.length);
   const width = formatDecimalInches(spec.width);
   const height = formatDecimalInches(spec.height);
   return `fefco-${spec.style}-${length}x${width}x${height}in.${extension}`;
+}
+
+export function downloadSvgFromPayload(svg: string, payload: BoxSpecPayload): void {
+  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  triggerDownload(blob, buildFilenameFromPayload(payload, "svg"));
+}
+
+export function downloadDxfFromPayload(blob: Blob, payload: BoxSpecPayload): void {
+  triggerDownload(blob, buildFilenameFromPayload(payload, "dxf"));
 }
 
 export function downloadSvg(svg: string, spec: BoxSpec): void {

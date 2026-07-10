@@ -24,6 +24,7 @@ import ezdxf
 import svgwrite
 
 from dieline_core.scoring import (
+    DEFAULT_JOINT,
     RSC_0201_SCORING_FLUTES,
     fraction_to_unit,
     glue_tab_for_joint,
@@ -249,7 +250,7 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     height = parse_dim(payload.get("height"))
     caliper = parse_dim(payload.get("caliper"))
     glue_tab = parse_dim(payload.get("glue_tab"))
-    joint = str(payload.get("joint", "taped")).strip().lower()
+    joint = str(payload.get("joint", DEFAULT_JOINT)).strip().lower()
     overlap = parse_dim(payload.get("overlap"))
     slot_in = parse_dim(payload.get("slot"))
     flute_raw = payload.get("flute")
@@ -259,10 +260,15 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     scoring_flute = normalize_scoring_flute(str(flute_raw)) if flute_specified else None
 
     if fefco_code in TABLE_DRIVEN_FEFCO:
+        tab_width_in = parse_dim(payload.get("tab_width"))
         if math.isfinite(glue_tab) and glue_tab >= 0:
             glue = glue_tab
         elif joint == "glued":
-            glue = glue_tab_for_joint("glued", unit)
+            glue = glue_tab_for_joint(
+                "glued",
+                unit,
+                tab_width_in if math.isfinite(tab_width_in) and tab_width_in > 0 else None,
+            )
         else:
             glue = 0.0
     else:
