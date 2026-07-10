@@ -27,12 +27,17 @@ from dieline_core.scoring import (
     RSC_0201_SCORING_FLUTES,
     fraction_to_unit,
     glue_tab_for_joint,
+    hsc_0200_taped_allowances,
     normalize_scoring_flute,
+    rsc_0201_scoring_error,
     rsc_0201_taped_allowances,
+    scoring_flute_error,
 )
 
 if TYPE_CHECKING:
     from ezdxf.document import Drawing as DxfDrawing
+
+TABLE_DRIVEN_FEFCO = frozenset({"0201", "hsc", "tube"})
 
 UNITS: dict[str, dict[str, float | str]] = {
     "in": {
@@ -247,9 +252,13 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     joint = str(payload.get("joint", "taped")).strip().lower()
     overlap = parse_dim(payload.get("overlap"))
     slot_in = parse_dim(payload.get("slot"))
-    scoring_flute = normalize_scoring_flute(payload.get("flute") or payload.get("flute_type"))
+    flute_raw = payload.get("flute")
+    if flute_raw is None:
+        flute_raw = payload.get("flute_type")
+    flute_specified = flute_raw is not None and str(flute_raw).strip() != ""
+    scoring_flute = normalize_scoring_flute(str(flute_raw)) if flute_specified else None
 
-    if fefco_code == "0201":
+    if fefco_code in TABLE_DRIVEN_FEFCO:
         if math.isfinite(glue_tab) and glue_tab >= 0:
             glue = glue_tab
         elif joint == "glued":
@@ -270,14 +279,13 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         warnings.append("Enter positive L × W × H")
     if not (caliper > 0):
         warnings.append("Caliper must be greater than zero.")
-    if fefco_code == "0201":
+    if fefco_code in TABLE_DRIVEN_FEFCO:
         if joint not in ("taped", "glued"):
             warnings.append("joint must be 'taped' or 'glued'.")
         if scoring_flute is None:
             scoring_flute = "C"
         elif scoring_flute not in RSC_0201_SCORING_FLUTES:
-            supported = ", ".join(RSC_0201_SCORING_FLUTES)
-            warnings.append(f"unsupported flute '{scoring_flute}' for 0201 scoring (supported: {supported}).")
+            warnings.append(scoring_flute_error(scoring_flute, fefco_code))
 
     if warnings:
         return DielineResult(ok=False, warnings=warnings, unit=unit)
@@ -308,6 +316,28 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         body_height = height + fraction_to_unit(row.depth_add, unit)
         half_flap = width / 2 + fraction_to_unit(row.flap_half_add, unit)
         flap_top = flap_bottom = half_flap
+    elif fefco_code == "hsc":
+        row = hsc_0200_taped_allowances(scoring_flute)  # type: ignore[arg-type]
+        base_dims = (length, width, length, width)
+        panels = [
+            base + fraction_to_unit(adder, unit)
+            for base, adder in zip(base_dims, row.wcc_panel_adds, strict=True)
+        ]
+        panel_length, panel_width = panels[0], panels[1]
+        body_height = height + fraction_to_unit(row.depth_add, unit)
+        half_flap = width / 2 + fraction_to_unit(row.flap_half_add, unit)
+        flap_top = 0.0
+        flap_bottom = half_flap
+    elif fefco_code == "tube":
+        row = rsc_0201_taped_allowances(scoring_flute)  # type: ignore[arg-type]
+        base_dims = (length, width, length, width)
+        panels = [
+            base + fraction_to_unit(adder, unit)
+            for base, adder in zip(base_dims, row.wcc_panel_adds, strict=True)
+        ]
+        panel_length, panel_width = panels[0], panels[1]
+        body_height = height
+        flap_top = flap_bottom = 0.0
     else:
         panel_length = length + caliper
         panel_width = width + caliper
@@ -542,8 +572,8 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         "overlap": overlap_val,
         "fillet_radius": fillet_radius_cfg,
         "units": unit,
-        "joint": joint if fefco_code == "0201" else None,
-        "scoring_flute": scoring_flute if fefco_code == "0201" else None,
+        "joint": joint if fefco_code in TABLE_DRIVEN_FEFCO else None,
+        "scoring_flute": scoring_flute if fefco_code in TABLE_DRIVEN_FEFCO else None,
     }
 
     if is_crash_lock:

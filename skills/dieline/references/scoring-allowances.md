@@ -206,6 +206,66 @@ Blank runs W | L | W | L | W. Flaps: full W top and bottom.
 
 ---
 
+## Tube (TT/ST) and Liner — four-panel wraps, no flaps
+
+Two related no-flap styles that field samples often present as "a tube." The distinction is the
+**manufacturer's joint**: a **Tube** is joined (Taped Tube "TT" or Stitched Tube "ST" — shop
+code 22 per the 1985 abbreviations sheet); a **Liner** is *not joined* (code 17, "Liner (Not
+Taped)") — a knocked-down-flat wrap that sits inside another box. Blank = four panels by D high,
+no flap scores. Salesman question that separates them: "is there a taped/stitched seam?"
+
+### Taped Tube (TT) — [CCA] pp. 29–30, 125–200 lb / 200–350 CB
+| Flute | WCC panels | Blank |
+|---|---|---|
+| B | L+1/16 \| W+⅛ \| L+⅛ \| W+1/16 | D by 2L+2W+⅜ |
+| C | L+⅛ \| W+3/16 \| L+3/16 \| W+⅛ | D by 2L+2W+⅝ |
+| DW | L+¼ \| W+5/16 \| L+5/16 \| W+¼ | D by 2L+2W+1⅛ |
+
+**Identical to the RSC Taped WCC rows** — which validates the solver's tube model (WCC = RSC,
+height = D, no flap allowance). All three rows checksum against CCA's printed sheet sizes. [CCA]
+also carries heavier grades (275–350 and 500–600) if test-awareness is ever added.
+
+### Liner — [Appendix] "Tape or KDF Liner" page
+The page gives **two directions of formula** — the shop was doing inverse solving by hand:
+
+**Given inside dimensions of the LINER** (you know what the liner must hold):
+| Flute | Panels | Blank |
+|---|---|---|
+| B | L+1/16 \| W+⅛ \| L+⅛ \| W+1/16 | D by 2L+2W+⅜ |
+| C | L+⅛ \| W+3/16 \| L+3/16 \| W+⅛ | D by 2L+2W+⅝ |
+| BC | L+¼ \| W+5/16 \| L+5/16 \| W+¼ | D by 2L+2W+1⅛ |
+
+**Given inside dimensions of the BOX the liner goes into** (uniform clearance subtracted):
+| Flute | Panels |
+|---|---|
+| B | L−⅛ \| W−⅛ \| L−⅛ \| W−⅛ |
+| C | L−3/16 \| W−3/16 \| L−3/16 \| W−3/16 |
+| BC | L−5/16 \| W−5/16 \| L−5/16 \| W−5/16 |
+
+The clearance equals the larger of that flute's positive allowances — the liner's OD must clear
+the box's ID.
+
+**Verification notes** (this page prints no sheet sizes, so no direct checksum was possible):
+the liner-ID rows are **identical to the CCA Taped Tube rows** for every shared flute — a strong
+internal consistency check between independent pages. Three caveats for the owner:
+1. The page prints **AB with the same values as BC** (both 1⅛ total), whereas CCA's TT gives AB
+   a heavier 1⅜ — either the shop treats all DW liners alike or it's a print artifact. Only BC
+   is carried in the generator, so this is dormant.
+2. Each formula ends **"Slit D"** — read as: the depth direction is a *slit* (or slit-score) at
+   D rather than a crease, consistent with the slit notation on the slide-container pages.
+   `TODO(owner): confirm slit vs score at the D line for liners.`
+3. The page's diagram orders panels **W | L | W | L** while the formulas list L first. Totals
+   are unaffected, but the solver's `--panel-1` interpretation (edge to first vertical score)
+   should confirm which panel leads on real samples. `TODO(owner): confirm lead panel.`
+
+**Solver/skill implication:** the solver's `tube` style is correct for TT/ST samples. A true
+liner sample solves to the same L/W/D via the liner-ID rows (identical values), so for *solving*
+the distinction is cosmetic on B/C/BC — but for *generating* a liner from a target **box** ID,
+the negative-clearance table above is the correct math and differs from TT. Aliases agents
+should recognize: tube, taped tube, TT, stitched tube, ST, liner, KDF liner, sleeve, wrap.
+
+---
+
 ## Bookfold
 *(= CCA "One Piece Folder", 1PF.)*
 

@@ -56,6 +56,42 @@ def test_rsc_0201_c_flute_taped_12x9x4():
     assert _acc_scores(result) == pytest.approx([4.625, 9.0])
 
 
+def test_rsc_0201_defaults_to_c_when_flute_omitted():
+    result = build_dieline(
+        {
+            "fefco_code": "0201",
+            "length": 12,
+            "width": 9,
+            "height": 4,
+            "caliper": 0.1563,
+            "joint": "taped",
+            "units": "in",
+        }
+    )
+
+    assert result.ok, result.warnings
+    assert result.derived["scoring_flute"] == "C"
+    assert result.total_w == pytest.approx(42.625)
+
+
+def test_rsc_0201_rejects_unsupported_flute():
+    result = build_dieline(
+        {
+            "fefco_code": "0201",
+            "length": 12,
+            "width": 9,
+            "height": 4,
+            "caliper": 0.0781,
+            "flute_type": "E",
+            "joint": "taped",
+            "units": "in",
+        }
+    )
+
+    assert not result.ok
+    assert result.warnings == ["no scoring allowances for flute E on 0201"]
+
+
 def test_rsc_0201_c_flute_glued_adds_glue_tab():
     result = build_dieline(
         {

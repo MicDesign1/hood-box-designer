@@ -1,33 +1,23 @@
-"""Flute -> board caliper (thickness) lookup for the `dieline` CLI.
+"""Flute -> board caliper (thickness) lookup.
 
-TODO(owner): these are generic, commonly-cited nominal single-wall/double-wall
-caliper figures pulled from public flute reference charts — NOT your actual
-board specs, which vary by mill/supplier. Confirm and replace with your real
-numbers before relying on CLI output for production. Until then, treat any
-CLI-generated box as a rough-caliper draft.
-
-The existing backend/API has no flute->caliper mapping at all — `flute_type`
-on BoxSpec is accepted but unused; callers supply `caliper` directly. This
-table exists so the CLI's `--flute` flag can drive `caliper` for slot/fillet
-geometry. For 0201, panel scoring allowances come from `dieline_core/scoring.py`
-(table-driven per flute), not from caliper.
+Caliper values from skills/dieline/references/scoring-allowances.md
+(Quick-Reference: Flute caliper). Used for slot/fillet geometry; 0201 panel
+scoring allowances come from `dieline_core/scoring.py`, not from caliper.
 """
 
 from __future__ import annotations
 
-# nominal caliper, keyed by unit system
+# Nominal caliper in inches (Quick-Reference table).
 FLUTE_CALIPER_IN: dict[str, float] = {
-    "B": 0.098,
-    "C": 0.140,
-    "E": 0.060,
-    "BC": 0.238,
+    "A": 0.2188,
+    "B": 0.1250,
+    "C": 0.1563,
+    "E": 0.0781,
+    "BC": 0.2813,
 }
 
 FLUTE_CALIPER_MM: dict[str, float] = {
-    "B": 2.5,
-    "C": 3.6,
-    "E": 1.5,
-    "BC": 6.1,
+    flute: round(inches * 25.4, 4) for flute, inches in FLUTE_CALIPER_IN.items()
 }
 
 SUPPORTED_FLUTES = tuple(FLUTE_CALIPER_IN.keys())
