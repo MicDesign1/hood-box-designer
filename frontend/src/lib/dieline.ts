@@ -1,5 +1,5 @@
 import { formatDecimalInches } from "@/lib/imperial";
-import type { BoxSpec } from "@/types/box";
+import { caliperForSpec, type BoxSpec } from "@/types/box";
 import type { DielineGeometry } from "@/types/geometry";
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
@@ -22,18 +22,31 @@ export interface BoxSpecPayload {
   caliper: number;
   units: "in";
   fillet_radius?: number;
+  flute_type?: BoxSpec["fluteType"];
+  joint?: BoxSpec["joint"];
 }
 
 export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
-  return {
+  const payload: BoxSpecPayload = {
     fefco_code: spec.style,
     length: spec.length,
     width: spec.width,
     height: spec.height,
-    caliper: spec.caliper,
+    caliper: caliperForSpec(spec),
     units: "in",
     ...(spec.filletRadius !== undefined ? { fillet_radius: spec.filletRadius } : {}),
   };
+
+  if (spec.style === "0201") {
+    if (spec.fluteType) {
+      payload.flute_type = spec.fluteType;
+    }
+    if (spec.joint) {
+      payload.joint = spec.joint;
+    }
+  }
+
+  return payload;
 }
 
 export async function fetchDielineSvg(

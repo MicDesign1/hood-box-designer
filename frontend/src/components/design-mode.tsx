@@ -36,9 +36,14 @@ import { DielinePreview } from "@/components/dieline-preview";
 import { DerivedScoresTable } from "@/components/derived-scores-table";
 import {
   FEFCO_STYLES,
+  JOINT_OPTIONS,
+  RSC_FLUTE_OPTIONS,
+  caliperForSpec,
   getFefcoStyleLabel,
   isFefcoStyleAvailable,
   type BoxSpec,
+  type JointType,
+  type RscFluteType,
 } from "@/types/box";
 import type { DielineGeometry } from "@/types/geometry";
 
@@ -56,6 +61,12 @@ const DIMENSION_FIELDS: {
   { key: "height", label: "Height (in)", min: 1, decimalStep: 0.0625, precision: 3 },
   { key: "caliper", label: "Board Caliper (in)", min: 0.01, decimalStep: 0.001, precision: 4 },
 ];
+
+function visibleDimensionFields(style: BoxSpec["style"]) {
+  return style === "0201"
+    ? DIMENSION_FIELDS.filter((field) => field.key !== "caliper")
+    : DIMENSION_FIELDS;
+}
 
 function buildInputValues(spec: BoxSpec, format: DimensionFormat): Record<NumericField, string> {
   return {
@@ -92,6 +103,8 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
   const [showLabels, setShowLabels] = useState(true);
 
   const styleIsAvailable = isFefcoStyleAvailable(spec.style);
+  const isRsc = spec.style === "0201";
+  const effectiveCaliper = caliperForSpec(spec);
 
   // Re-syncs on manual format toggles AND on external spec updates (e.g. Photo
   // Mode applying measurements) — but not on every keystroke from
@@ -204,7 +217,18 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
             <Select
               value={spec.style}
               onValueChange={(value) =>
-                setSpec((current) => ({ ...current, style: value as BoxSpec["style"] }))
+                setSpec((current) => {
+                  const style = value as BoxSpec["style"];
+                  if (style === "0201") {
+                    return {
+                      ...current,
+                      style,
+                      fluteType: current.fluteType ?? "C",
+                      joint: current.joint ?? "taped",
+                    };
+                  }
+                  return { ...current, style };
+                })
               }
             >
               <SelectTrigger id="fefco-style" className="w-full">
@@ -248,7 +272,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            {DIMENSION_FIELDS.map(({ key, label, min, decimalStep }) => (
+            {visibleDimensionFields(spec.style).map(({ key, label, min, decimalStep }) => (
               <div key={key} className="space-y-2">
                 <Label htmlFor={key}>{label}</Label>
                 <Input
@@ -278,6 +302,58 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
             ))}
           </div>
 
+          {isRsc ? (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="flute-type">Flute</Label>
+                <Select
+                  value={spec.fluteType ?? "C"}
+                  onValueChange={(value) =>
+                    setSpec((current) => ({
+                      ...current,
+                      fluteType: value as RscFluteType,
+                    }))
+                  }
+                >
+                  <SelectTrigger id="flute-type" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RSC_FLUTE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="joint-type">Joint</Label>
+                <Select
+                  value={spec.joint ?? "taped"}
+                  onValueChange={(value) =>
+                    setSpec((current) => ({
+                      ...current,
+                      joint: value as JointType,
+                    }))
+                  }
+                >
+                  <SelectTrigger id="joint-type" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {JOINT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          ) : null}
+
           {dimensionFormat === "fraction" ? (
             <p className="text-xs text-muted-foreground">
               Enter fractions like <span className="font-mono">12 1/2</span> or{" "}
@@ -297,7 +373,14 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
             />
             <p className="text-xs text-muted-foreground">
               Rounds the slot-root corners where flaps meet the crease. Leave blank for an
-              automatic radius (0.75× caliper, min 0.125&quot;); enter 0 for sharp corners.
+              automatic radius (0.75× board caliper, min 0.125&quot;); enter 0 for sharp corners.
+              {isRsc ? (
+                <>
+                  {" "}
+                  Caliper follows the selected flute ({formatInches(effectiveCaliper, "decimal", 4)}{" "}
+                  in).
+                </>
+              ) : null}
             </p>
           </div>
         </CardContent>
@@ -394,7 +477,9 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                   spec.length,
                   spec.width,
                   spec.height,
-                  spec.caliper,
+                  isRsc
+                    ? `${spec.fluteType ?? "C"}-flute · ${spec.joint ?? "taped"} joint`
+                    : `Board ${formatInches(spec.caliper, dimensionFormat, 4)} in`,
                   dimensionFormat,
                 )}
               </p>

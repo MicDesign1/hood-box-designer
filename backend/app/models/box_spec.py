@@ -41,7 +41,11 @@ class BoxSpec(BaseModel):
     )
     flute_type: FluteType | None = Field(
         default=None,
-        description="Optional flute hint for allowances and warnings.",
+        description="Flute type for scoring allowances (0201) and caliper lookup.",
+    )
+    joint: Literal["taped", "glued"] | None = Field(
+        default=None,
+        description="Manufacturer's joint for 0201: taped (no tab) or glued (1.5 in tab).",
     )
 
 

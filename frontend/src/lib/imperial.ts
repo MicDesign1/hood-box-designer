@@ -130,7 +130,7 @@ export function formatDimensionSummary(
   length: number,
   width: number,
   height: number,
-  caliper: number,
+  boardLabel: string,
   format: DimensionFormat,
 ): string {
   const box =
@@ -138,12 +138,7 @@ export function formatDimensionSummary(
       ? `${formatFractionInches(length)} × ${formatFractionInches(width)} × ${formatFractionInches(height)} in`
       : `${formatDecimalInches(length)} × ${formatDecimalInches(width)} × ${formatDecimalInches(height)} in`;
 
-  const board =
-    format === "fraction"
-      ? `${formatFractionInches(caliper, 64)} in`
-      : `${formatDecimalInches(caliper, 4)} in`;
-
-  return `${box} · Board ${board}`;
+  return `${box} · ${boardLabel}`;
 }
 
 export type UnitSystem = "in" | "mm";

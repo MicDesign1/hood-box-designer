@@ -9,6 +9,10 @@ export type FefcoStyle =
   | "0427"
   | "0713";
 
+export type RscFluteType = "B" | "C" | "BC";
+
+export type JointType = "taped" | "glued";
+
 export interface FefcoStyleOption {
   code: FefcoStyle;
   label: string;
@@ -27,13 +31,36 @@ export const FEFCO_STYLES: FefcoStyleOption[] = [
   { code: "0427", label: "0427 — Die-Cut with Hinged Lid", available: false },
 ];
 
+export const RSC_FLUTE_OPTIONS: { value: RscFluteType; label: string }[] = [
+  { value: "B", label: "B-flute" },
+  { value: "C", label: "C-flute" },
+  { value: "BC", label: "BC doublewall" },
+];
+
+export const JOINT_OPTIONS: { value: JointType; label: string }[] = [
+  { value: "taped", label: "Taped (no glue tab)" },
+  { value: "glued", label: "Glued (1.5″ tab)" },
+];
+
+/** Nominal caliper (in) from scoring-allowances.md Quick-Reference. */
+export const FLUTE_CALIPER_IN: Record<RscFluteType, number> = {
+  B: 0.125,
+  C: 0.1563,
+  BC: 0.2813,
+};
+
 /** All dimensions are stored as decimal inches. */
 export interface BoxSpec {
   style: FefcoStyle;
   length: number;
   width: number;
   height: number;
+  /** Board caliper for non-0201 styles. For 0201, derived from `fluteType`. */
   caliper: number;
+  /** 0201 only — selects scoring row and caliper. */
+  fluteType?: RscFluteType;
+  /** 0201 only — manufacturer's joint. */
+  joint?: JointType;
   /** Slot-root fillet radius override, in inches. Omit for the backend's automatic radius. */
   filletRadius?: number;
 }
@@ -43,7 +70,9 @@ export const DEFAULT_BOX_SPEC: BoxSpec = {
   length: 12,
   width: 8,
   height: 6,
-  caliper: 0.157,
+  caliper: FLUTE_CALIPER_IN.C,
+  fluteType: "C",
+  joint: "taped",
 };
 
 export function getFefcoStyleLabel(code: FefcoStyle): string {
@@ -52,4 +81,11 @@ export function getFefcoStyleLabel(code: FefcoStyle): string {
 
 export function isFefcoStyleAvailable(code: FefcoStyle): boolean {
   return FEFCO_STYLES.find((style) => style.code === code)?.available ?? false;
+}
+
+export function caliperForSpec(spec: BoxSpec): number {
+  if (spec.style === "0201" && spec.fluteType) {
+    return FLUTE_CALIPER_IN[spec.fluteType];
+  }
+  return spec.caliper;
 }
