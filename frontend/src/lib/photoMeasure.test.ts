@@ -86,6 +86,21 @@ describe("photoMeasure", () => {
     expect(distanceInches(hA, imgP1, imgP2)).toBeCloseTo(3.75, 6);
   });
 
+  it("credit card reference: scaled world points → distance 3.37 in", () => {
+    const world: Pt[] = [
+      { x: 0, y: 0 },
+      { x: 3.37, y: 0 },
+      { x: 3.37, y: 2.125 },
+      { x: 0, y: 2.125 },
+    ];
+    const image = world.map((p) => ({ x: p.x * PX_PER_IN, y: p.y * PX_PER_IN }));
+    const h = computeHomography(image, world);
+
+    const a = { x: 0, y: 1 * PX_PER_IN };
+    const b = { x: 3.37 * PX_PER_IN, y: 1 * PX_PER_IN };
+    expect(distanceInches(h, a, b)).toBeCloseTo(3.37, 6);
+  });
+
   it("degenerate input: three collinear corners throw", () => {
     const collinear: Pt[] = [
       { x: 0, y: 0 },

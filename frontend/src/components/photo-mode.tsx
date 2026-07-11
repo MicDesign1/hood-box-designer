@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Camera, Ruler, Trash2, Undo2, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Camera, Ruler, Trash2, Undo2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,10 +13,11 @@ import { formatFractionInches, parseImperialInput } from "@/lib/imperial";
 import {
   CORNER_ORDER,
   REFERENCE_OBJECTS,
-  computeScale,
-  dist,
+  computeCalibration,
+  measureInches,
   requiredCalPoints,
   snapToSixteenth,
+  type Calibration,
   type Point,
   type ReferenceId,
 } from "@/lib/photo-calibration";
@@ -31,6 +32,7 @@ const DIMENSION_LABELS: Record<DimensionKey, string> = {
 };
 
 const DIMENSION_ORDER: DimensionKey[] = ["length", "width", "height"];
+const NUDGE_STEP = 1;
 
 export interface PhotoModeProps {
   onApplyMeasurements: (dims: { length: number; width: number; height: number }) => void;
@@ -42,23 +44,24 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
 
   const [image, setImage] = useState<PhotoImage | null>(null);
   const [fitSignal, setFitSignal] = useState(0);
-  const [refId, setRefId] = useState<ReferenceId>("poker");
+  const [refId, setRefId] = useState<ReferenceId>("sheet");
   const [customLengthInput, setCustomLengthInput] = useState("");
   const [tool, setTool] = useState<"calibrate" | "measure">("calibrate");
   const [calPoints, setCalPoints] = useState<Point[]>([]);
   const [measurePoints, setMeasurePoints] = useState<Point[]>([]);
   const [assignments, setAssignments] = useState<Record<number, DimensionKey>>({});
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const customLengthInches = parseImperialInput(customLengthInput);
-  const pxPerInch = computeScale(refId, calPoints, customLengthInches);
+  const calibration: Calibration | null = computeCalibration(refId, calPoints, customLengthInches);
   const maxCalPoints = requiredCalPoints(refId);
+  const measureFn = calibration ? (a: Point, b: Point) => measureInches(calibration, a, b) : null;
 
   const measurements = [];
   for (let i = 0; i + 1 < measurePoints.length; i += 2) {
     const a = measurePoints[i];
     const b = measurePoints[i + 1];
-    const px = dist(a, b);
-    const inches = pxPerInch ? px / pxPerInch : null;
+    const inches = measureFn ? measureFn(a, b) : null;
     measurements.push({ index: measurements.length, inches, assignedTo: assignments[measurements.length] ?? null });
   }
 
@@ -69,7 +72,7 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
   }
   const missingDimensions = DIMENSION_ORDER.filter((key) => assignedValues[key] === undefined);
 
-  const step = !image ? 1 : !pxPerInch ? 2 : missingDimensions.length > 0 ? 3 : 4;
+  const step = !image ? 1 : !calibration ? 2 : missingDimensions.length > 0 ? 3 : 4;
 
   function loadFile(file: File) {
     const reader = new FileReader();
@@ -82,6 +85,7 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
         setMeasurePoints([]);
         setAssignments({});
         setTool("calibrate");
+        setSelectedIndex(null);
         setFitSignal((s) => s + 1);
       };
       probe.src = url;
@@ -98,6 +102,12 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
   function handleReferenceChange(value: string) {
     setRefId(value as ReferenceId);
     setCalPoints([]);
+    setSelectedIndex(null);
+  }
+
+  function switchTool(next: "calibrate" | "measure") {
+    setTool(next);
+    setSelectedIndex(null);
   }
 
   function assignMeasurement(index: number, key: DimensionKey) {
@@ -113,6 +123,18 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
 
   function undoLastMeasurePoint() {
     setMeasurePoints((points) => (points.length % 2 === 1 ? points.slice(0, -1) : points.slice(0, -2)));
+    setSelectedIndex(null);
+  }
+
+  function nudgeSelected(dx: number, dy: number) {
+    if (selectedIndex === null) return;
+    const points = tool === "calibrate" ? calPoints : measurePoints;
+    const setPoints = tool === "calibrate" ? setCalPoints : setMeasurePoints;
+    const point = points[selectedIndex];
+    if (!point) return;
+    const updated = [...points];
+    updated[selectedIndex] = { x: point.x + dx, y: point.y + dy };
+    setPoints(updated);
   }
 
   function handleApply() {
@@ -152,7 +174,7 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
         <Card>
           <CardHeader>
             <CardTitle>1 · Photo</CardTitle>
-            <CardDescription>Shoot straight down, box flat, reference card lying on it.</CardDescription>
+            <CardDescription>Shoot straight down, box flat, reference object lying on it.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <input ref={uploadInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileInput} />
@@ -181,9 +203,11 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
           <CardHeader>
             <CardTitle>2 · Scale reference</CardTitle>
             <CardDescription>
-              {refId === "custom"
-                ? "Tap the two ends of a known length (ruler, tape, printed scale)."
-                : `Tap the card's 4 corners in order: ${CORNER_ORDER.join(" → ")}.`}
+              {refId === "sheet"
+                ? "Lay a letter-size sheet flat on the same surface as the blank, fully visible, then tap its four corners."
+                : refId === "custom"
+                  ? "Tap the two ends of a known length (ruler, tape, printed scale). Shoot straight overhead for best accuracy."
+                  : `Tap the card's 4 corners in order: ${CORNER_ORDER.join(" → ")}.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -221,12 +245,16 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
             <div
               className={cn(
                 "flex items-center justify-between rounded-md border px-3 py-2 text-sm",
-                pxPerInch ? "border-emerald-300 bg-emerald-50" : "border-border bg-muted/30",
+                calibration ? "border-emerald-300 bg-emerald-50" : "border-border bg-muted/30",
               )}
             >
               <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scale</span>
-              <span className={cn("font-mono text-sm font-semibold", pxPerInch ? "text-emerald-700" : "text-muted-foreground")}>
-                {pxPerInch ? `${Math.round(pxPerInch)} px = 1"` : `${calPoints.length}/${maxCalPoints} points placed`}
+              <span className={cn("font-mono text-sm font-semibold", calibration ? "text-emerald-700" : "text-muted-foreground")}>
+                {calibration
+                  ? calibration.kind === "homography"
+                    ? "✓ calibrated (perspective-corrected)"
+                    : `${Math.round(calibration.pxPerInch)} px = 1"`
+                  : `${calPoints.length}/${maxCalPoints} points placed`}
               </span>
             </div>
 
@@ -234,12 +262,20 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
               <Button
                 size="sm"
                 variant={tool === "calibrate" ? "default" : "outline"}
-                onClick={() => setTool("calibrate")}
+                onClick={() => switchTool("calibrate")}
                 disabled={!image}
               >
                 Place corners
               </Button>
-              <Button size="sm" variant="outline" disabled={!calPoints.length} onClick={() => setCalPoints([])}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!calPoints.length}
+                onClick={() => {
+                  setCalPoints([]);
+                  setSelectedIndex(null);
+                }}
+              >
                 <Trash2 />
                 Clear
               </Button>
@@ -257,8 +293,8 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
               <Button
                 size="sm"
                 variant={tool === "measure" ? "default" : "outline"}
-                disabled={!pxPerInch}
-                onClick={() => setTool("measure")}
+                disabled={!calibration}
+                onClick={() => switchTool("measure")}
               >
                 <Ruler />
                 Measure
@@ -267,13 +303,22 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
                 <Undo2 />
                 Undo
               </Button>
-              <Button size="sm" variant="outline" disabled={!measurePoints.length} onClick={() => { setMeasurePoints([]); setAssignments({}); }}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!measurePoints.length}
+                onClick={() => {
+                  setMeasurePoints([]);
+                  setAssignments({});
+                  setSelectedIndex(null);
+                }}
+              >
                 <Trash2 />
                 Clear
               </Button>
             </div>
 
-            {!pxPerInch ? (
+            {!calibration ? (
               <p className="text-xs text-muted-foreground">Calibrate the scale first, then measurements read in real inches.</p>
             ) : measurements.length === 0 ? (
               <p className="text-xs text-muted-foreground">Tap two points on the photo to take a measurement.</p>
@@ -303,6 +348,64 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
             )}
           </CardContent>
         </Card>
+
+        {(tool === "calibrate" ? calPoints.length : measurePoints.length) > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Nudge selected marker</CardTitle>
+              <CardDescription>
+                {selectedIndex !== null
+                  ? `Marker ${selectedIndex + 1} selected — nudges move it 1 image pixel.`
+                  : "Tap a marker on the photo to select it."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid w-fit grid-cols-3 gap-1">
+                <span />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={selectedIndex === null}
+                  onClick={() => nudgeSelected(0, -NUDGE_STEP)}
+                  aria-label="Nudge up"
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+                <span />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={selectedIndex === null}
+                  onClick={() => nudgeSelected(-NUDGE_STEP, 0)}
+                  aria-label="Nudge left"
+                >
+                  <ArrowLeft className="size-4" />
+                </Button>
+                <span />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={selectedIndex === null}
+                  onClick={() => nudgeSelected(NUDGE_STEP, 0)}
+                  aria-label="Nudge right"
+                >
+                  <ArrowRight className="size-4" />
+                </Button>
+                <span />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={selectedIndex === null}
+                  onClick={() => nudgeSelected(0, NUDGE_STEP)}
+                  aria-label="Nudge down"
+                >
+                  <ArrowDown className="size-4" />
+                </Button>
+                <span />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
@@ -338,16 +441,18 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
             calPoints={calPoints}
             measurePoints={measurePoints}
             maxCalPoints={maxCalPoints}
-            pxPerInch={pxPerInch}
+            measureFn={measureFn}
             onCalPointsChange={setCalPoints}
             onMeasurePointsChange={setMeasurePoints}
+            selectedIndex={selectedIndex}
+            onSelectedIndexChange={setSelectedIndex}
             fitSignal={fitSignal}
           />
         ) : (
           <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 rounded-lg border bg-white px-6 text-center text-sm text-muted-foreground sm:min-h-[420px] lg:min-h-[520px]">
             <Camera className="size-8 text-muted-foreground/50" />
             <p>No photo yet</p>
-            <p className="text-xs">Take or upload a photo of the flat box with a reference card on it.</p>
+            <p className="text-xs">Take or upload a photo of the flat box with a reference object on it.</p>
           </div>
         )}
       </section>

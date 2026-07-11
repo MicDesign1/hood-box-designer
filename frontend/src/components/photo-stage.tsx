@@ -19,11 +19,17 @@ export interface PhotoStageProps {
   calPoints: Point[];
   measurePoints: Point[];
   maxCalPoints: number;
-  pxPerInch: number | null;
+  /** Converts a pair of image-pixel points to a real-world distance in inches, or null if not yet calibrated. */
+  measureFn: ((a: Point, b: Point) => number) | null;
   onCalPointsChange: (points: Point[]) => void;
   onMeasurePointsChange: (points: Point[]) => void;
+  /** Index (within the active tool's point array) of the currently selected marker, for nudging. */
+  selectedIndex: number | null;
+  onSelectedIndexChange: (index: number | null) => void;
   /** Bump this to force a re-fit (e.g. a new photo was loaded). */
   fitSignal: number;
+  /** Passive, non-interactive segments from prior measurements (e.g. other fields already measured). */
+  extraSegments?: { ptA: Point; ptB: Point; label: string }[];
 }
 
 interface ViewBox {
@@ -35,6 +41,8 @@ interface ViewBox {
 
 const FIT_MARGIN_RATIO = 0.05;
 const HIT_RADIUS_SCREEN_PX = 26;
+const LOUPE_SIZE = 130;
+const LOUPE_ZOOM = 3;
 
 /**
  * A pannable/zoomable native-SVG viewer over an uploaded photo, supporting
@@ -49,10 +57,13 @@ export function PhotoStage({
   calPoints,
   measurePoints,
   maxCalPoints,
-  pxPerInch,
+  measureFn,
   onCalPointsChange,
   onMeasurePointsChange,
+  selectedIndex,
+  onSelectedIndexChange,
   fitSignal,
+  extraSegments,
 }: PhotoStageProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -62,10 +73,26 @@ export function PhotoStage({
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchDist = useRef<number | null>(null);
   const gesture = useRef<{ moved: boolean; dragIndex: number | null; startX: number; startY: number } | null>(null);
+  const [loupe, setLoupe] = useState<{
+    clientX: number;
+    clientY: number;
+    imagePoint: Point;
+    screenPxPerImagePx: number;
+  } | null>(null);
+  const [loadedImg, setLoadedImg] = useState<HTMLImageElement | null>(null);
 
   const activePoints = tool === "calibrate" ? calPoints : measurePoints;
   const setActivePoints = tool === "calibrate" ? onCalPointsChange : onMeasurePointsChange;
   const maxActivePoints = tool === "calibrate" ? maxCalPoints : Infinity;
+
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setLoadedImg(img);
+    img.src = image.url;
+    return () => {
+      img.onload = null;
+    };
+  }, [image.url]);
 
   const fit = useCallback(() => {
     if (!(image.w > 0) || !(image.h > 0)) return;
@@ -136,6 +163,15 @@ export function PhotoStage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomAt, vb !== null]);
 
+  function updateLoupe(clientX: number, clientY: number) {
+    const svg = svgRef.current;
+    const v = vbRef.current;
+    const pt = clientToImage(clientX, clientY);
+    if (!svg || !v || !pt) return;
+    const rect = svg.getBoundingClientRect();
+    setLoupe({ clientX, clientY, imagePoint: pt, screenPxPerImagePx: rect.width / v.w });
+  }
+
   function hitTestActivePoint(clientX: number, clientY: number): number | null {
     const svg = svgRef.current;
     const v = vbRef.current;
@@ -164,9 +200,12 @@ export function PhotoStage({
       const [a, b] = [...pointers.current.values()];
       pinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
       gesture.current = null;
+      setLoupe(null);
     } else {
       const dragIndex = hitTestActivePoint(event.clientX, event.clientY);
       gesture.current = { moved: false, dragIndex, startX: event.clientX, startY: event.clientY };
+      if (dragIndex != null) onSelectedIndexChange(dragIndex);
+      updateLoupe(event.clientX, event.clientY);
     }
     setIsDragging(true);
   }
@@ -185,6 +224,7 @@ export function PhotoStage({
         if (pt) {
           setActivePoints(activePoints.map((p, i) => (i === g.dragIndex ? pt : p)));
         }
+        updateLoupe(event.clientX, event.clientY);
       } else {
         const current = vbRef.current;
         const rect = svgRef.current!.getBoundingClientRect();
@@ -213,10 +253,15 @@ export function PhotoStage({
     if (wasSingle && g && !g.moved && g.dragIndex == null) {
       const pt = clientToImage(event.clientX, event.clientY);
       if (pt && activePoints.length < maxActivePoints) {
+        const nextIndex = activePoints.length;
         setActivePoints([...activePoints, pt]);
+        onSelectedIndexChange(nextIndex);
+      } else {
+        onSelectedIndexChange(null);
       }
     }
     gesture.current = null;
+    setLoupe(null);
     if (pointers.current.size === 0) setIsDragging(false);
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -264,31 +309,63 @@ export function PhotoStage({
             opacity={tool === "calibrate" ? 0.9 : 0.4}
           />
         )}
-        {calPoints.map((p, i) => (
-          <g key={`cal-${i}`} opacity={tool === "calibrate" ? 1 : 0.4}>
-            <circle cx={p.x} cy={p.y} r={pointRadius} fill="#f59e0b33" stroke="#f59e0b" strokeWidth={pointRadius * 0.22} />
-            <circle cx={p.x} cy={p.y} r={pointRadius * 0.14} fill="#f59e0b" />
-            <text
-              x={p.x}
-              y={p.y - pointRadius * 1.4}
-              textAnchor="middle"
-              fontSize={fontSize}
-              fontWeight={700}
-              fill="#b45309"
-              stroke="#ffffffcc"
-              strokeWidth={fontSize * 0.15}
-              paintOrder="stroke"
-            >
-              {i + 1}
-            </text>
-          </g>
-        ))}
+        {calPoints.map((p, i) => {
+          const isSelected = tool === "calibrate" && selectedIndex === i;
+          return (
+            <g key={`cal-${i}`} opacity={tool === "calibrate" ? 1 : 0.4}>
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r={isSelected ? pointRadius * 1.35 : pointRadius}
+                fill="#f59e0b33"
+                stroke="#f59e0b"
+                strokeWidth={isSelected ? pointRadius * 0.4 : pointRadius * 0.22}
+              />
+              <circle cx={p.x} cy={p.y} r={pointRadius * 0.14} fill="#f59e0b" />
+              <text
+                x={p.x}
+                y={p.y - pointRadius * 1.4}
+                textAnchor="middle"
+                fontSize={fontSize}
+                fontWeight={700}
+                fill="#b45309"
+                stroke="#ffffffcc"
+                strokeWidth={fontSize * 0.15}
+                paintOrder="stroke"
+              >
+                {i + 1}
+              </text>
+            </g>
+          );
+        })}
+
+        {extraSegments?.map((seg, i) => {
+          const mx = (seg.ptA.x + seg.ptB.x) / 2;
+          const my = (seg.ptA.y + seg.ptB.y) / 2;
+          return (
+            <g key={`extra-${i}`} opacity={0.55}>
+              <line x1={seg.ptA.x} y1={seg.ptA.y} x2={seg.ptB.x} y2={seg.ptB.y} stroke="#2563eb" strokeWidth={pointRadius * 0.28} />
+              <text
+                x={mx}
+                y={my - pointRadius * 0.9}
+                textAnchor="middle"
+                fontSize={fontSize * 0.95}
+                fontWeight={600}
+                fill="#1e3a8a"
+                stroke="#ffffffcc"
+                strokeWidth={fontSize * 0.15}
+                paintOrder="stroke"
+              >
+                {seg.label}
+              </text>
+            </g>
+          );
+        })}
 
         {measurementPairs.map(([a, b], i) => {
           const mx = (a.x + b.x) / 2;
           const my = (a.y + b.y) / 2;
-          const px = dist(a, b);
-          const inches = pxPerInch ? px / pxPerInch : null;
+          const inches = measureFn ? measureFn(a, b) : null;
           const label = inches != null ? `M${i + 1} ${formatFractionInches(inches, 16)}"` : `M${i + 1}`;
           return (
             <g key={`m-${i}`} opacity={tool === "measure" ? 1 : 0.55}>
@@ -309,18 +386,21 @@ export function PhotoStage({
             </g>
           );
         })}
-        {measurePoints.map((p, i) => (
-          <circle
-            key={`mp-${i}`}
-            cx={p.x}
-            cy={p.y}
-            r={pointRadius * 0.55}
-            fill="#0284c744"
-            stroke="#0284c7"
-            strokeWidth={pointRadius * 0.2}
-            opacity={tool === "measure" ? 1 : 0.55}
-          />
-        ))}
+        {measurePoints.map((p, i) => {
+          const isSelected = tool === "measure" && selectedIndex === i;
+          return (
+            <circle
+              key={`mp-${i}`}
+              cx={p.x}
+              cy={p.y}
+              r={isSelected ? pointRadius * 0.85 : pointRadius * 0.55}
+              fill="#0284c744"
+              stroke="#0284c7"
+              strokeWidth={isSelected ? pointRadius * 0.36 : pointRadius * 0.2}
+              opacity={tool === "measure" ? 1 : 0.55}
+            />
+          );
+        })}
       </svg>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
@@ -338,6 +418,72 @@ export function PhotoStage({
           Fit
         </Button>
       </div>
+
+      {loupe && loadedImg && (
+        <Loupe
+          clientX={loupe.clientX}
+          clientY={loupe.clientY}
+          image={loadedImg}
+          imagePoint={loupe.imagePoint}
+          screenPxPerImagePx={loupe.screenPxPerImagePx}
+        />
+      )}
     </div>
+  );
+}
+
+function Loupe({
+  clientX,
+  clientY,
+  image,
+  imagePoint,
+  screenPxPerImagePx,
+}: {
+  clientX: number;
+  clientY: number;
+  image: HTMLImageElement;
+  imagePoint: Point | null;
+  screenPxPerImagePx: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !imagePoint) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const srcSize = LOUPE_SIZE / (Math.max(screenPxPerImagePx, 1e-6) * LOUPE_ZOOM);
+    const sx = Math.max(0, Math.min(image.naturalWidth - srcSize, imagePoint.x - srcSize / 2));
+    const sy = Math.max(0, Math.min(image.naturalHeight - srcSize, imagePoint.y - srcSize / 2));
+
+    ctx.clearRect(0, 0, LOUPE_SIZE, LOUPE_SIZE);
+    ctx.drawImage(image, sx, sy, srcSize, srcSize, 0, 0, LOUPE_SIZE, LOUPE_SIZE);
+    ctx.strokeStyle = "#dc2626";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(LOUPE_SIZE / 2, 0);
+    ctx.lineTo(LOUPE_SIZE / 2, LOUPE_SIZE);
+    ctx.moveTo(0, LOUPE_SIZE / 2);
+    ctx.lineTo(LOUPE_SIZE, LOUPE_SIZE / 2);
+    ctx.stroke();
+  }, [image, imagePoint, screenPxPerImagePx]);
+
+  if (!imagePoint) return null;
+
+  const left = Math.min(
+    typeof window !== "undefined" ? window.innerWidth - LOUPE_SIZE - 8 : clientX,
+    clientX + 16,
+  );
+  const top = Math.max(8, clientY - LOUPE_SIZE - 24);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={LOUPE_SIZE}
+      height={LOUPE_SIZE}
+      className="pointer-events-none fixed z-50 rounded-full border-2 border-primary shadow-lg"
+      style={{ left, top, width: LOUPE_SIZE, height: LOUPE_SIZE }}
+    />
   );
 }

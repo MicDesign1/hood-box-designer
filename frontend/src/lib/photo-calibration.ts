@@ -1,11 +1,13 @@
-/** Scale calibration + measurement math for Photo Mode, in image-pixel coordinates. */
+/** Reference-object calibration for Photo Mode, in image-pixel coordinates. */
+
+import { computeHomography, distanceInches, type Matrix3x3 } from "@/lib/photoMeasure";
 
 export interface Point {
   x: number;
   y: number;
 }
 
-export type ReferenceId = "poker" | "credit" | "custom";
+export type ReferenceId = "sheet" | "poker" | "credit" | "custom";
 
 export interface ReferenceObject {
   id: ReferenceId;
@@ -15,12 +17,17 @@ export interface ReferenceObject {
 }
 
 export const REFERENCE_OBJECTS: ReferenceObject[] = [
+  { id: "sheet", label: "Letter-size sheet (8.5 × 11 in)", dimensions: [8.5, 11] },
   { id: "poker", label: "Poker playing card", dimensions: [2.5, 3.5] },
   { id: "credit", label: "Credit card (ID-1)", dimensions: [3.37, 2.125] },
   { id: "custom", label: "Known length (2 points)", dimensions: null },
 ];
 
 export const CORNER_ORDER = ["top-left", "top-right", "bottom-right", "bottom-left"] as const;
+
+export type Calibration =
+  | { kind: "homography"; matrix: Matrix3x3 }
+  | { kind: "scale"; pxPerInch: number };
 
 export function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -31,21 +38,25 @@ export function requiredCalPoints(refId: ReferenceId): number {
 }
 
 /**
- * Returns pixels-per-inch from calibration points, or null if not enough
- * points are placed yet. For card references, corners are expected in
- * order (top-left, top-right, bottom-right, bottom-left) but the width/
- * height assignment is resolved by matching the longer/shorter measured
- * side to the longer/shorter reference side, so exact orientation doesn't
- * have to be perfect.
+ * Builds a calibration from tapped points, or null if not enough points are
+ * placed yet. Rectangular references (sheet, cards) go through the tested
+ * 4-point homography engine (`computeHomography`), which perspective-corrects
+ * the whole photo rather than just deriving a single px/inch scale — corners
+ * are expected in order (top-left, top-right, bottom-right, bottom-left),
+ * with the object's long/short side matched to whichever measured side is
+ * longer so exact physical orientation doesn't have to be guessed. "Known
+ * length" stays a simple two-point scale.
  */
-export function computeScale(
+export function computeCalibration(
   refId: ReferenceId,
   calPoints: Point[],
   customLengthInches: number | null,
-): number | null {
+): Calibration | null {
   if (refId === "custom") {
     if (calPoints.length < 2 || !customLengthInches || customLengthInches <= 0) return null;
-    return dist(calPoints[0], calPoints[1]) / customLengthInches;
+    const px = dist(calPoints[0], calPoints[1]);
+    if (!(px > 0)) return null;
+    return { kind: "scale", pxPerInch: px / customLengthInches };
   }
 
   const ref = REFERENCE_OBJECTS.find((r) => r.id === refId);
@@ -54,13 +65,29 @@ export function computeScale(
   const [p0, p1, p2, p3] = calPoints;
   const widthPx = (dist(p0, p1) + dist(p3, p2)) / 2;
   const heightPx = (dist(p0, p3) + dist(p1, p2)) / 2;
-  const [refW, refH] = ref.dimensions;
+  const long = Math.max(...ref.dimensions);
+  const short = Math.min(...ref.dimensions);
+  const worldW = widthPx >= heightPx ? long : short;
+  const worldH = widthPx >= heightPx ? short : long;
 
-  const scaleFromLongSide = Math.max(widthPx, heightPx) / Math.max(refW, refH);
-  const scaleFromShortSide = Math.min(widthPx, heightPx) / Math.min(refW, refH);
-  if (!(scaleFromLongSide > 0) || !(scaleFromShortSide > 0)) return null;
+  const worldPts: Point[] = [
+    { x: 0, y: 0 },
+    { x: worldW, y: 0 },
+    { x: worldW, y: worldH },
+    { x: 0, y: worldH },
+  ];
 
-  return (scaleFromLongSide + scaleFromShortSide) / 2;
+  try {
+    const matrix = computeHomography(calPoints, worldPts);
+    return { kind: "homography", matrix };
+  } catch {
+    return null;
+  }
+}
+
+export function measureInches(calibration: Calibration, a: Point, b: Point): number {
+  if (calibration.kind === "scale") return dist(a, b) / calibration.pxPerInch;
+  return distanceInches(calibration.matrix, a, b);
 }
 
 /** Snaps a measured value to the nearest 1/16" — matches how a tape measure reads. */
