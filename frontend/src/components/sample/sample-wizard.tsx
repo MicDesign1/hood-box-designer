@@ -10,6 +10,7 @@ import {
   Loader2,
   Package,
   RotateCcw,
+  Ruler,
 } from "lucide-react";
 
 import { DielinePreviewPanel } from "@/components/dieline-preview-panel";
@@ -23,6 +24,12 @@ import {
   PanelOneDiagram,
   PanelTwoDiagram,
 } from "@/components/sample/measurement-diagrams";
+import {
+  PhotoMeasureLauncher,
+  PhotoMeasureOverlay,
+  type PhotoCalibration,
+  type PhotoSegment,
+} from "@/components/sample/photo-measure";
 import { FluteProfile, StyleDiagram } from "@/components/sample/style-diagrams";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -191,6 +198,13 @@ export function SampleWizard() {
   >({});
   const [exportingDxf, setExportingDxf] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [photoCalibration, setPhotoCalibration] = useState<PhotoCalibration | null>(null);
+  const [photoSegments, setPhotoSegments] = useState<
+    Partial<Record<keyof SampleMeasurements, PhotoSegment>>
+  >({});
+  const [photoOverlayOpen, setPhotoOverlayOpen] = useState(false);
+  const [photoOverlayMode, setPhotoOverlayMode] = useState<"calibrate" | "measure">("calibrate");
+  const [photoMeasureField, setPhotoMeasureField] = useState<keyof SampleMeasurements | null>(null);
 
   const reset = useCallback(() => {
     setState(INITIAL_SAMPLE_STATE);
@@ -203,6 +217,10 @@ export function SampleWizard() {
     setPreviewWarnings([]);
     setPreviewDerived({});
     setCopied(false);
+    setPhotoCalibration(null);
+    setPhotoSegments({});
+    setPhotoOverlayOpen(false);
+    setPhotoMeasureField(null);
   }, []);
 
   const runSolve = useCallback(async (next: SampleWizardState) => {
@@ -319,6 +337,40 @@ export function SampleWizard() {
   function selectFlute(flute: SampleFlute) {
     setState((current) => ({ ...current, flute, step: "measurements" }));
   }
+
+  function openPhotoCalibrate() {
+    setPhotoOverlayMode("calibrate");
+    setPhotoMeasureField(null);
+    setPhotoOverlayOpen(true);
+  }
+
+  function openPhotoMeasure(field: keyof SampleMeasurements) {
+    if (!photoCalibration) {
+      openPhotoCalibrate();
+      return;
+    }
+    setPhotoOverlayMode("measure");
+    setPhotoMeasureField(field);
+    setPhotoOverlayOpen(true);
+  }
+
+  function handlePhotoMeasureComplete(
+    field: keyof SampleMeasurements,
+    inches: number,
+    segment: PhotoSegment,
+  ) {
+    updateMeasurement(field, inches.toFixed(2));
+    setPhotoSegments((current) => ({ ...current, [field]: segment }));
+  }
+
+  const photoFieldLabels: Record<keyof SampleMeasurements, string> = {
+    panelD: "Height panel",
+    panel1: "First panel width",
+    panel2: "Second panel width",
+    blankWidth: "Blank width",
+    blankHeight: "Blank height",
+    flapHeight: "Flap height",
+  };
 
   async function submitMeasurements() {
     await runSolve(state);
@@ -487,6 +539,11 @@ export function SampleWizard() {
               </p>
             </div>
 
+            <PhotoMeasureLauncher
+              hasCalibration={photoCalibration !== null}
+              onOpenCalibrate={openPhotoCalibrate}
+            />
+
             {state.style !== "tube" ? (
               <MeasureField
                 label="Height panel"
@@ -494,6 +551,9 @@ export function SampleWizard() {
                 value={state.measurements.panelD}
                 onChange={(v) => updateMeasurement("panelD", v)}
                 diagram={<PanelDDiagram className="mx-auto h-28 w-24" />}
+                onMeasure={
+                  photoCalibration ? () => openPhotoMeasure("panelD") : undefined
+                }
               />
             ) : (
               <MeasureField
@@ -502,6 +562,11 @@ export function SampleWizard() {
                 value={state.measurements.blankHeight}
                 onChange={(v) => updateMeasurement("blankHeight", v)}
                 diagram={<BlankHeightDiagram className="mx-auto h-28 w-24" />}
+                onMeasure={
+                  photoCalibration
+                    ? () => openPhotoMeasure("blankHeight")
+                    : undefined
+                }
               />
             )}
 
@@ -515,6 +580,9 @@ export function SampleWizard() {
               value={state.measurements.panel1}
               onChange={(v) => updateMeasurement("panel1", v)}
               diagram={<PanelOneDiagram className="mx-auto h-20 w-full max-w-xs" />}
+              onMeasure={
+                photoCalibration ? () => openPhotoMeasure("panel1") : undefined
+              }
             />
 
             <MeasureField
@@ -523,6 +591,9 @@ export function SampleWizard() {
               value={state.measurements.panel2}
               onChange={(v) => updateMeasurement("panel2", v)}
               diagram={<PanelTwoDiagram className="mx-auto h-20 w-full max-w-xs" />}
+              onMeasure={
+                photoCalibration ? () => openPhotoMeasure("panel2") : undefined
+              }
             />
 
             <details className="rounded-xl border bg-card px-4 py-3">
@@ -546,6 +617,11 @@ export function SampleWizard() {
                       <BlankWidthDiagram className="mx-auto h-20 w-full max-w-xs" />
                     )
                   }
+                  onMeasure={
+                    photoCalibration
+                      ? () => openPhotoMeasure("blankWidth")
+                      : undefined
+                  }
                 />
                 {state.style !== "tube" && (
                   <>
@@ -555,6 +631,11 @@ export function SampleWizard() {
                       value={state.measurements.blankHeight}
                       onChange={(v) => updateMeasurement("blankHeight", v)}
                       diagram={<BlankHeightDiagram className="mx-auto h-28 w-24" />}
+                      onMeasure={
+                        photoCalibration
+                          ? () => openPhotoMeasure("blankHeight")
+                          : undefined
+                      }
                     />
                     <MeasureField
                       label="Flap height"
@@ -567,6 +648,11 @@ export function SampleWizard() {
                         ) : (
                           <FlapHeightDiagram className="mx-auto h-28 w-full max-w-xs" />
                         )
+                      }
+                      onMeasure={
+                        photoCalibration
+                          ? () => openPhotoMeasure("flapHeight")
+                          : undefined
                       }
                     />
                   </>
@@ -766,6 +852,23 @@ export function SampleWizard() {
           </section>
         )}
       </main>
+
+      <PhotoMeasureOverlay
+        open={photoOverlayOpen}
+        mode={photoOverlayMode}
+        measureFieldLabel={
+          photoMeasureField ? photoFieldLabels[photoMeasureField] : undefined
+        }
+        calibration={photoCalibration}
+        segments={photoSegments}
+        measureField={photoMeasureField}
+        onClose={() => {
+          setPhotoOverlayOpen(false);
+          setPhotoMeasureField(null);
+        }}
+        onCalibrationComplete={(cal) => setPhotoCalibration(cal)}
+        onMeasureComplete={handlePhotoMeasureComplete}
+      />
     </div>
   );
 }
@@ -776,17 +879,27 @@ function MeasureField({
   value,
   onChange,
   diagram,
+  onMeasure,
 }: {
   label: string;
   hint: string;
   value: string;
   onChange: (value: string) => void;
   diagram: React.ReactNode;
+  onMeasure?: () => void;
 }) {
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="mb-3">{diagram}</div>
-      <Label className="text-base font-semibold">{label}</Label>
+      <div className="flex items-start justify-between gap-2">
+        <Label className="text-base font-semibold">{label}</Label>
+        {onMeasure && (
+          <Button variant="outline" size="sm" onClick={onMeasure}>
+            <Ruler className="size-3.5" />
+            Measure
+          </Button>
+        )}
+      </div>
       <p className="mb-2 text-sm text-muted-foreground">{hint}</p>
       <Input
         inputMode="decimal"
