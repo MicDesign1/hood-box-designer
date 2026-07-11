@@ -106,15 +106,30 @@ export function PhotoStage({
     fit();
   }, [fit, fitSignal]);
 
+  // The svg uses the default "xMidYMid meet" preserveAspectRatio: it scales
+  // uniformly to fit and letterboxes/centers any leftover space, rather than
+  // stretching width/height independently. Screen<->image conversions must
+  // mirror that exact transform, or clicks drift off-target whenever the
+  // container's aspect ratio doesn't happen to match the photo's.
+  function meetTransform(rect: { left: number; top: number; width: number; height: number }, v: ViewBox) {
+    const scale = Math.min(rect.width / v.w, rect.height / v.h);
+    return {
+      scale,
+      offsetX: rect.left + (rect.width - v.w * scale) / 2,
+      offsetY: rect.top + (rect.height - v.h * scale) / 2,
+    };
+  }
+
   const clientToImage = useCallback((clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
     const v = vbRef.current;
     if (!svg || !v) return null;
     const rect = svg.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
+    const { scale, offsetX, offsetY } = meetTransform(rect, v);
     return {
-      x: v.x + ((clientX - rect.left) / rect.width) * v.w,
-      y: v.y + ((clientY - rect.top) / rect.height) * v.h,
+      x: v.x + (clientX - offsetX) / scale,
+      y: v.y + (clientY - offsetY) / scale,
     };
   }, []);
 
@@ -125,8 +140,9 @@ export function PhotoStage({
       if (!current || !svg) return;
       const rect = svg.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      const px = current.x + ((clientX - rect.left) / rect.width) * current.w;
-      const py = current.y + ((clientY - rect.top) / rect.height) * current.h;
+      const { scale, offsetX, offsetY } = meetTransform(rect, current);
+      const px = current.x + (clientX - offsetX) / scale;
+      const py = current.y + (clientY - offsetY) / scale;
       const maxW = image.w * 20 || 1000;
       const minW = image.w * 0.02 || 1;
       const w = Math.min(Math.max(current.w * factor, minW), maxW);
@@ -169,7 +185,8 @@ export function PhotoStage({
     const pt = clientToImage(clientX, clientY);
     if (!svg || !v || !pt) return;
     const rect = svg.getBoundingClientRect();
-    setLoupe({ clientX, clientY, imagePoint: pt, screenPxPerImagePx: rect.width / v.w });
+    const { scale } = meetTransform(rect, v);
+    setLoupe({ clientX, clientY, imagePoint: pt, screenPxPerImagePx: scale });
   }
 
   function hitTestActivePoint(clientX: number, clientY: number): number | null {
@@ -178,7 +195,7 @@ export function PhotoStage({
     const pt = clientToImage(clientX, clientY);
     if (!svg || !v || !pt) return null;
     const rect = svg.getBoundingClientRect();
-    const screenPxPerImagePx = rect.width / v.w;
+    const { scale: screenPxPerImagePx } = meetTransform(rect, v);
     const hitRadiusImagePx = HIT_RADIUS_SCREEN_PX / Math.max(screenPxPerImagePx, 1e-6);
 
     let best: number | null = null;
@@ -228,8 +245,9 @@ export function PhotoStage({
       } else {
         const current = vbRef.current;
         const rect = svgRef.current!.getBoundingClientRect();
-        const dx = (event.movementX / rect.width) * current.w;
-        const dy = (event.movementY / rect.height) * current.h;
+        const { scale } = meetTransform(rect, current);
+        const dx = event.movementX / scale;
+        const dy = event.movementY / scale;
         const next = { ...current, x: current.x - dx, y: current.y - dy };
         vbRef.current = next;
         setVb(next);
