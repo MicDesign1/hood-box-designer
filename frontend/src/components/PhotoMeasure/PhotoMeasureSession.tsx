@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -34,9 +34,41 @@ import {
   type ReferenceId,
 } from "@/lib/photo-calibration";
 import { cn } from "@/lib/utils";
+import type { CaptureMarker, CaptureRole, CaptureSession } from "@/types/capture";
 import type { LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "./types";
 
 const NUDGE_STEP = 1;
+
+// Phase 0 only: PhotoMeasureSession's `dimensions` prop is a flat
+// { key, label }[] with no role-kind metadata -- the marker-designation UI
+// that actually lets a user choose dimension/panel/reference per marker
+// doesn't exist yet (that's Phase 2/3). Until then, a key is inferred as a
+// direct-entry axis if it matches Design's fixed vocabulary, otherwise
+// treated as a Sample-style panel field. Every current caller
+// (photo-mode.tsx, sample-wizard.tsx) already only ever uses one of these
+// two closed vocabularies, so this is exact today, not a guess -- but it's
+// a stand-in this phase deliberately keeps narrow rather than have it
+// silently cover a case (reference roles) it isn't built for yet.
+const DIRECT_DIMENSION_AXES = new Set(["length", "width", "height"]);
+
+function inferRoleForKey(key: string): CaptureRole {
+  if (DIRECT_DIMENSION_AXES.has(key)) {
+    return { kind: "dimension", axis: key as "length" | "width" | "height" };
+  }
+  return {
+    kind: "panel",
+    panelField: key as "panel1" | "panel2" | "panelD" | "blankWidth" | "blankHeight" | "flapHeight",
+  };
+}
+
+/** The old `Record<string, LockedMeasurement>` key a role corresponds to,
+ * or null for reference roles (which have no such key -- by design, nothing
+ * upstream of Phase 2 can construct a reference role yet). */
+function roleLookupKey(role: CaptureRole): string | null {
+  if (role.kind === "dimension") return role.axis;
+  if (role.kind === "panel") return role.panelField;
+  return null;
+}
 const PAPER_SIZE_STORAGE_KEY = "photoMeasure:paperRefId";
 /** How long to wait for opencv to load + run before giving up and falling
  * back to the not-detected notice. Slow connections are real; never spin
@@ -102,7 +134,15 @@ export function PhotoMeasureSession({
   const [measurePoints, setMeasurePoints] = useState<Point[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [activeFieldIndex, setActiveFieldIndex] = useState(0);
-  const [locked, setLocked] = useState<Record<string, LockedMeasurement>>({});
+  // Source of truth for locked measurements is now the shared CaptureMarker
+  // record, not a bare key->value map -- see `locked` below, which derives
+  // the exact same Record<string, LockedMeasurement> shape every existing
+  // read site in this file already expects, so nothing downstream of that
+  // derivation had to change.
+  const [markers, setMarkers] = useState<CaptureMarker[]>([]);
+  const markerIdCounterRef = useRef(0);
+  const sessionIdRef = useRef(`capture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const capturedAtRef = useRef(new Date().toISOString());
   const [error, setError] = useState<string | null>(null);
   const [detectionState, setDetectionState] = useState<DetectionState>(initialCalibration ? "manual" : "idle");
   const [detectDebugEnabled] = useState(isDetectDebugEnabled);
@@ -110,10 +150,52 @@ export function PhotoMeasureSession({
   const [debugCandidates, setDebugCandidates] = useState<PaperCandidate[]>([]);
   const detectionGenerationRef = useRef(0);
 
+  const locked = useMemo(() => {
+    const map: Record<string, LockedMeasurement> = {};
+    for (const m of markers) {
+      if (!m.role || !m.keep) continue;
+      const key = roleLookupKey(m.role);
+      if (key == null) continue; // reference roles don't participate in the old key->value map
+      map[key] = { inches: m.rawInches, segment: { ptA: m.ptA, ptB: m.ptB, inches: m.rawInches } };
+    }
+    return map;
+  }, [markers]);
+
   const customLengthInches = parseImperialInput(customLengthInput);
   const calibration: Calibration | null = image ? computeCalibration(refId, calPoints, customLengthInches) : null;
   const maxCalPoints = requiredCalPoints(refId);
   const measureFn = calibration ? (a: Point, b: Point) => measureInches(calibration, a, b) : null;
+
+  // Phase 0: assembled for structural completeness (proves the session is
+  // genuinely representable, not just the marker array) but not yet
+  // exported or consumed by anything -- no external prop carries it out of
+  // this component. `method` is inferred from `presentation` for now: today
+  // embedded is always Design (direct-entry) and overlay is always Sample
+  // (panel-derived), 1:1, so this is exact, not a guess -- but it's a
+  // stand-in a future phase should replace with an explicit prop once a
+  // caller actually needs to declare it (e.g. once reference-dimension
+  // labeling needs the session's method to differ from its UI chrome).
+  const captureSession: CaptureSession = useMemo(
+    () => ({
+      id: sessionIdRef.current,
+      method: presentation === "embedded" ? "direct" : "panel-derived",
+      calibration: image
+        ? {
+            imageUrl: image.url,
+            imageWidth: image.w,
+            imageHeight: image.h,
+            refId,
+            calPoints,
+            customLengthInches,
+          }
+        : null,
+      markers,
+      flute: null, // not captured by this component today -- entered elsewhere in each flow's own form
+      caliper: null,
+      capturedAt: capturedAtRef.current,
+    }),
+    [presentation, image, refId, calPoints, customLengthInches, markers],
+  );
 
   const activeField = dimensions[activeFieldIndex] ?? null;
   const pendingInches =
@@ -132,7 +214,7 @@ export function PhotoMeasureSession({
     setImage(nextImage);
     setCalPoints([]);
     setMeasurePoints([]);
-    setLocked({});
+    setMarkers([]);
     setActiveFieldIndex(0);
     setTool("calibrate");
     setSelectedIndex(null);
@@ -311,9 +393,26 @@ export function PhotoMeasureSession({
 
   function lockActiveField() {
     if (!activeField || pendingInches == null) return;
-    const segment: PhotoSegment = { ptA: measurePoints[0]!, ptB: measurePoints[1]!, inches: pendingInches };
+    const ptA = measurePoints[0]!;
+    const ptB = measurePoints[1]!;
+    const role = inferRoleForKey(activeField.key);
+    const marker: CaptureMarker = {
+      id: `m${++markerIdCounterRef.current}`,
+      ptA,
+      ptB,
+      rawInches: pendingInches,
+      role,
+      keep: true,
+    };
+    setMarkers((current) => [
+      ...current.filter((m) => !m.role || roleLookupKey(m.role) !== activeField.key),
+      marker,
+    ]);
+
+    // External contract unchanged: still emit the exact same
+    // LockedMeasurement shape callers already handle.
+    const segment: PhotoSegment = { ptA, ptB, inches: pendingInches };
     const result: LockedMeasurement = { inches: pendingInches, segment };
-    setLocked((current) => ({ ...current, [activeField.key]: result }));
     onLockDimension(activeField.key, result);
     setMeasurePoints([]);
     setSelectedIndex(null);
