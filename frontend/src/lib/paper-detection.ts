@@ -142,7 +142,7 @@ export async function detectPaperCorners(
     return { corners: null, candidates, diagnostics: emptyDiagnostics() };
   }
 
-  const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+  const kernel = cv.Mat.ones(7, 7, cv.CV_8U);
   const gray = new cv.Mat();
   const edges = new cv.Mat();
   const contours = new cv.MatVector();
@@ -166,7 +166,11 @@ export async function detectPaperCorners(
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
     cv.Canny(gray, edges, 50, 150);
-    cv.dilate(edges, edges, kernel);
+    // Morphological closing (dilate then erode, same kernel) bridges small
+    // gaps/kinks along the sheet's boundary -- grout lines crossing it,
+    // shadow edges running parallel to it, a slight paper curl -- without
+    // permanently growing the boundary outward the way a bare dilate does.
+    cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
     cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     diagnostics.contoursTotal = contours.size();
