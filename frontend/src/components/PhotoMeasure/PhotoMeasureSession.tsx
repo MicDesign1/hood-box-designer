@@ -60,6 +60,15 @@ function isDetectDebugEnabled(): boolean {
   return new URLSearchParams(window.location.search).get("detectDebug") === "1";
 }
 
+// Diagnostic-script-only: bypasses the debug overlay's area floor/candidate
+// cap so an offline evidence-gathering run sees every contour opencv
+// considered, not just the ones worth drawing on screen. Never set by the
+// live UI itself.
+function isDetectLogAllEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("detectLogAll") === "1";
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
   return Promise.race([promise, new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms))]);
 }
@@ -97,6 +106,7 @@ export function PhotoMeasureSession({
   const [error, setError] = useState<string | null>(null);
   const [detectionState, setDetectionState] = useState<DetectionState>(initialCalibration ? "manual" : "idle");
   const [detectDebugEnabled] = useState(isDetectDebugEnabled);
+  const [detectLogAllEnabled] = useState(isDetectLogAllEnabled);
   const [debugCandidates, setDebugCandidates] = useState<PaperCandidate[]>([]);
   const detectionGenerationRef = useRef(0);
 
@@ -142,7 +152,7 @@ export function PhotoMeasureSession({
     setDebugCandidates([]);
 
     const outcome = await withTimeout(
-      detectPaperCorners(imgEl, aspect, { collectDebug: detectDebugEnabled }),
+      detectPaperCorners(imgEl, aspect, { collectDebug: detectDebugEnabled, logAll: detectLogAllEnabled }),
       DETECTION_TIMEOUT_MS,
     );
 
@@ -154,7 +164,37 @@ export function PhotoMeasureSession({
       setDetectionState("not-detected");
       return;
     }
-    if (detectDebugEnabled) setDebugCandidates(outcome.candidates);
+    if (detectDebugEnabled) {
+      setDebugCandidates(outcome.candidates);
+      // Exposed for frontend/scripts/detect-debug.mjs, which drives this
+      // exact runtime code path against a static test photo and reads this
+      // back -- not used by the app itself.
+      (window as unknown as { __paperDetectDebug?: unknown }).__paperDetectDebug = outcome;
+
+      const d = outcome.diagnostics;
+      if (d.fourPointCount === 0) {
+        console.info(
+          `[paper-detect] 0 of ${d.contoursTotal} contours ever reached the 4-point approxPolyDP stage ` +
+            `(work image ${d.workWidth}x${d.workHeight}, scale ${d.scale.toFixed(3)}).`,
+        );
+      } else {
+        console.info(
+          `[paper-detect] ${d.contoursTotal} contours -> ${d.fourPointCount} reached 4 points -> ${d.quadCount} were convex quads.`,
+        );
+      }
+      console.table(
+        outcome.candidates.map((c) => ({
+          pointCount: c.pointCount,
+          areaPx: Math.round(c.areaPx),
+          "area%": (c.areaFraction * 100).toFixed(1),
+          convex: c.isConvex,
+          ratio: c.measuredRatio?.toFixed(3) ?? "—",
+          ratioErr: c.ratioError != null ? `${(c.ratioError * 100).toFixed(0)}%` : "—",
+          accepted: c.accepted,
+          reason: c.reason,
+        })),
+      );
+    }
 
     const corners = outcome.corners;
     const cal = corners ? computeCalibration(forRefId, corners, null) : null;

@@ -28,24 +28,46 @@ const WORK_MAX_DIM = 900;
 // Debug mode (?detectDebug=1) relaxes the area floor so near-miss candidates
 // are still visible, but a genuinely noisy photo can produce hundreds of
 // spurious micro-contours -- floor and cap those out so the overlay (and
-// the extra Mat work behind it) stays usable.
+// the extra Mat work behind it) stays usable. `logAll` (diagnostic script
+// use only, not the live UI) bypasses both, since evidence-gathering needs
+// the full picture.
 const DEBUG_MIN_AREA_FRACTION = 0.02;
 const DEBUG_MAX_CANDIDATES = 40;
 
-/** A 4-point quad opencv considered, kept only when opts.collectDebug is set
- * (see ?detectDebug=1 in PhotoMeasureSession) — for visualizing why
- * detection picked what it picked, or rejected everything. */
+/** Every contour opencv considered, kept only when opts.collectDebug or
+ * opts.logAll is set — for visualizing/logging why detection picked what it
+ * picked, or rejected everything. `points` holds whatever approxPolyDP
+ * produced (not necessarily 4), in full-resolution image coordinates. */
 export interface PaperCandidate {
   points: Point[];
+  pointCount: number;
+  areaPx: number;
   areaFraction: number;
+  isConvex: boolean;
+  /** long/short side ratio of the fitted quad; null unless pointCount === 4. */
+  measuredRatio: number | null;
   ratioError: number | null;
   accepted: boolean;
   reason: string;
 }
 
+export interface PaperDetectionDiagnostics {
+  workWidth: number;
+  workHeight: number;
+  /** full-res-to-working-image scale factor (1 = no downscale). */
+  scale: number;
+  /** total contours returned by findContours, before any filtering. */
+  contoursTotal: number;
+  /** contours whose approxPolyDP result had exactly 4 points, regardless of convexity. */
+  fourPointCount: number;
+  /** of those, how many were also convex (i.e. real quad candidates). */
+  quadCount: number;
+}
+
 export interface PaperDetectionResult {
   corners: Point[] | null;
   candidates: PaperCandidate[];
+  diagnostics: PaperDetectionDiagnostics;
 }
 
 let cvPromise: Promise<OpenCv> | null = null;
@@ -74,6 +96,15 @@ async function loadCv(): Promise<OpenCv> {
   return cvPromise;
 }
 
+const emptyDiagnostics = (workWidth = 0, workHeight = 0, scale = 1): PaperDetectionDiagnostics => ({
+  workWidth,
+  workHeight,
+  scale,
+  contoursTotal: 0,
+  fourPointCount: 0,
+  quadCount: 0,
+});
+
 /**
  * Finds the best paper-shaped quadrilateral in an image and returns its 4
  * corners in full-resolution image-pixel coordinates, angle-sorted (see
@@ -83,21 +114,24 @@ async function loadCv(): Promise<OpenCv> {
  * placement silently, never surface a blocking error for this.
  *
  * Pass `collectDebug: true` to also get every 4-point quad opencv considered
- * with its accept/reject reason (dev-only debug overlay use; skipped by
- * default since it does extra work classifying rejects that production
- * doesn't need).
+ * with its accept/reject reason (dev-only debug overlay use; capped/floored
+ * to stay usable on noisy photos). Pass `logAll: true` (diagnostic script
+ * use, not the live UI) to additionally bypass that cap/floor and classify
+ * every contour findContours returned, regardless of point count or size —
+ * this is slower and only meant for offline evidence-gathering.
  */
 export async function detectPaperCorners(
   image: HTMLImageElement,
   aspect: PaperAspect,
-  opts: { collectDebug?: boolean } = {},
+  opts: { collectDebug?: boolean; logAll?: boolean } = {},
 ): Promise<PaperDetectionResult> {
+  const wantDebug = !!(opts.collectDebug || opts.logAll);
   const candidates: PaperCandidate[] = [];
   let cv: OpenCv;
   try {
     cv = await loadCv();
   } catch {
-    return { corners: null, candidates };
+    return { corners: null, candidates, diagnostics: emptyDiagnostics() };
   }
 
   const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
@@ -111,12 +145,13 @@ export async function detectPaperCorners(
     const scale = Math.min(1, WORK_MAX_DIM / Math.max(image.naturalWidth, image.naturalHeight));
     const workW = Math.max(1, Math.round(image.naturalWidth * scale));
     const workH = Math.max(1, Math.round(image.naturalHeight * scale));
+    const diagnostics = emptyDiagnostics(workW, workH, scale);
 
     const canvas = document.createElement("canvas");
     canvas.width = workW;
     canvas.height = workH;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return { corners: null, candidates };
+    if (!ctx) return { corners: null, candidates, diagnostics };
     ctx.drawImage(image, 0, 0, workW, workH);
 
     src = cv.imread(canvas);
@@ -126,6 +161,7 @@ export async function detectPaperCorners(
     cv.dilate(edges, edges, kernel);
     cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
+    diagnostics.contoursTotal = contours.size();
     const workArea = workW * workH;
     let best: { pts: Point[]; score: number } | null = null;
 
@@ -134,7 +170,9 @@ export async function detectPaperCorners(
       const area = cv.contourArea(contour);
       const areaFraction = area / workArea;
       const areaOk = areaFraction >= MIN_AREA_FRACTION && areaFraction <= MAX_AREA_FRACTION;
-      const worthDebugging = opts.collectDebug && areaFraction >= DEBUG_MIN_AREA_FRACTION && candidates.length < DEBUG_MAX_CANDIDATES;
+      const worthDebugging =
+        opts.logAll ||
+        (opts.collectDebug && areaFraction >= DEBUG_MIN_AREA_FRACTION && candidates.length < DEBUG_MAX_CANDIDATES);
       if (!areaOk && !worthDebugging) {
         contour.delete();
         continue;
@@ -143,29 +181,40 @@ export async function detectPaperCorners(
       const peri = cv.arcLength(contour, true);
       const approx = new cv.Mat();
       cv.approxPolyDP(contour, approx, 0.02 * peri, true);
-      const isQuad = approx.rows === 4 && cv.isContourConvex(approx);
+      const pointCount = approx.rows;
+      const isConvex = cv.isContourConvex(approx);
+      if (pointCount === 4) {
+        diagnostics.fourPointCount += 1;
+        if (isConvex) diagnostics.quadCount += 1;
+      }
+      const isQuad = pointCount === 4 && isConvex;
 
-      if (isQuad) {
-        const rawPts: Point[] = [];
-        for (let r = 0; r < 4; r++) {
-          rawPts.push({ x: approx.data32S[r * 2]! / scale, y: approx.data32S[r * 2 + 1]! / scale });
-        }
-        const sorted = sortCornersByAngle(rawPts) as Point[];
+      const polyPts: Point[] = [];
+      for (let r = 0; r < pointCount; r++) {
+        polyPts.push({ x: approx.data32S[r * 2]! / scale, y: approx.data32S[r * 2 + 1]! / scale });
+      }
+
+      let measuredRatio: number | null = null;
+      let ratioError: number | null = null;
+      let accepted = false;
+      let reason: string;
+      let sorted = polyPts;
+
+      if (!isQuad) {
+        reason = !isConvex && pointCount === 4 ? "not convex" : `not a quad (${pointCount} pts)`;
+      } else {
+        sorted = sortCornersByAngle(polyPts) as Point[];
         const side0 = Math.hypot(sorted[1]!.x - sorted[0]!.x, sorted[1]!.y - sorted[0]!.y);
         const side1 = Math.hypot(sorted[2]!.x - sorted[1]!.x, sorted[2]!.y - sorted[1]!.y);
         const long = Math.max(side0, side1);
         const short = Math.min(side0, side1);
-
-        let ratioError: number | null = null;
-        let accepted = false;
-        let reason = "";
 
         if (!areaOk) {
           reason = areaFraction < MIN_AREA_FRACTION ? "area too small" : "area too large";
         } else if (short <= 0) {
           reason = "degenerate (zero-length side)";
         } else {
-          const measuredRatio = long / short;
+          measuredRatio = long / short;
           ratioError = Math.abs(measuredRatio - aspect.ratio) / aspect.ratio;
           if (ratioError > ASPECT_TOLERANCE_RATIO) {
             reason = `aspect ratio mismatch (Δ=${(ratioError * 100).toFixed(0)}%)`;
@@ -180,17 +229,19 @@ export async function detectPaperCorners(
             }
           }
         }
+      }
 
-        if (opts.collectDebug && candidates.length < DEBUG_MAX_CANDIDATES) {
-          candidates.push({ points: sorted, areaFraction, ratioError, accepted, reason });
-        }
-      } else if (opts.collectDebug && areaOk && candidates.length < DEBUG_MAX_CANDIDATES) {
+      if (wantDebug && (opts.logAll || candidates.length < DEBUG_MAX_CANDIDATES)) {
         candidates.push({
-          points: [],
+          points: sorted,
+          pointCount,
+          areaPx: area,
           areaFraction,
-          ratioError: null,
-          accepted: false,
-          reason: approx.rows === 4 ? "not convex" : `not a quad (${approx.rows} pts)`,
+          isConvex,
+          measuredRatio,
+          ratioError,
+          accepted,
+          reason,
         });
       }
 
@@ -200,16 +251,22 @@ export async function detectPaperCorners(
 
     // second pass: only the true best-scoring candidate should read as
     // "accepted" once every candidate has been scored (the loop above marks
-    // provisional bests as it goes, which can be superseded later).
-    if (opts.collectDebug) {
+    // provisional bests as it goes, which can be superseded later) -- fix up
+    // any provisional candidate's reason text so it doesn't still claim
+    // "accepted (best so far)" once accepted has flipped back to false.
+    if (wantDebug) {
       for (const c of candidates) {
-        c.accepted = best != null && c.points.length === 4 && c.points === best.pts;
+        const isFinalBest = best != null && c.pointCount === 4 && c.points === best.pts;
+        if (c.accepted && !isFinalBest) {
+          c.reason = "matched, but a later candidate scored higher";
+        }
+        c.accepted = isFinalBest;
       }
     }
 
-    return { corners: best ? best.pts : null, candidates };
+    return { corners: best ? best.pts : null, candidates, diagnostics };
   } catch {
-    return { corners: null, candidates };
+    return { corners: null, candidates, diagnostics: emptyDiagnostics() };
   } finally {
     kernel.delete();
     src?.delete();
