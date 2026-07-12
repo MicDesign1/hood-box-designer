@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatFractionInches, parseImperialInput } from "@/lib/imperial";
-import { PAPER_ASPECT, detectPaperCorners } from "@/lib/paper-detection";
+import { PAPER_ASPECT, detectPaperCorners, type PaperCandidate } from "@/lib/paper-detection";
 import {
   CORNER_ORDER,
   PAPER_REFERENCE_IDS,
@@ -38,6 +38,12 @@ import type { LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "
 
 const NUDGE_STEP = 1;
 const PAPER_SIZE_STORAGE_KEY = "photoMeasure:paperRefId";
+/** How long to wait for opencv to load + run before giving up and falling
+ * back to the not-detected notice. Slow connections are real; never spin
+ * forever. */
+const DETECTION_TIMEOUT_MS = 15000;
+
+type DetectionState = "idle" | "detecting" | "detected" | "not-detected" | "manual";
 
 function isPaperReference(id: ReferenceId): boolean {
   return (PAPER_REFERENCE_IDS as ReferenceId[]).includes(id);
@@ -47,6 +53,15 @@ function loadRememberedPaperRefId(): ReferenceId | null {
   if (typeof window === "undefined") return null;
   const stored = window.localStorage.getItem(PAPER_SIZE_STORAGE_KEY);
   return stored === "sheet" || stored === "a4" ? stored : null;
+}
+
+function isDetectDebugEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("detectDebug") === "1";
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  return Promise.race([promise, new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms))]);
 }
 
 export function PhotoMeasureSession({
@@ -80,10 +95,10 @@ export function PhotoMeasureSession({
   const [activeFieldIndex, setActiveFieldIndex] = useState(0);
   const [locked, setLocked] = useState<Record<string, LockedMeasurement>>({});
   const [error, setError] = useState<string | null>(null);
-  const [detecting, setDetecting] = useState(false);
-  const [calibrationSource, setCalibrationSource] = useState<"auto" | "manual" | null>(
-    initialCalibration ? "manual" : null,
-  );
+  const [detectionState, setDetectionState] = useState<DetectionState>(initialCalibration ? "manual" : "idle");
+  const [detectDebugEnabled] = useState(isDetectDebugEnabled);
+  const [debugCandidates, setDebugCandidates] = useState<PaperCandidate[]>([]);
+  const detectionGenerationRef = useRef(0);
 
   const customLengthInches = parseImperialInput(customLengthInput);
   const calibration: Calibration | null = image ? computeCalibration(refId, calPoints, customLengthInches) : null;
@@ -103,6 +118,7 @@ export function PhotoMeasureSession({
     });
 
   function resetForNewImage(nextImage: PhotoImage) {
+    detectionGenerationRef.current += 1; // supersede any in-flight detection for the old photo
     setImage(nextImage);
     setCalPoints([]);
     setMeasurePoints([]);
@@ -111,7 +127,8 @@ export function PhotoMeasureSession({
     setTool("calibrate");
     setSelectedIndex(null);
     setError(null);
-    setCalibrationSource(null);
+    setDetectionState("idle");
+    setDebugCandidates([]);
     setFitSignal((s) => s + 1);
   }
 
@@ -119,14 +136,34 @@ export function PhotoMeasureSession({
     if (!isPaperReference(forRefId)) return;
     const aspect = PAPER_ASPECT[forRefId];
     if (!aspect) return;
-    setDetecting(true);
-    const corners = await detectPaperCorners(imgEl, aspect);
-    setDetecting(false);
-    if (!corners) return; // silent fallback -- manual placement stays available
-    const cal = computeCalibration(forRefId, corners, null);
-    if (!cal) return;
+
+    const myGeneration = ++detectionGenerationRef.current;
+    setDetectionState("detecting");
+    setDebugCandidates([]);
+
+    const outcome = await withTimeout(
+      detectPaperCorners(imgEl, aspect, { collectDebug: detectDebugEnabled }),
+      DETECTION_TIMEOUT_MS,
+    );
+
+    // The user replaced the photo, changed reference, or started tapping
+    // manually while this was in flight -- this result is stale, drop it.
+    if (detectionGenerationRef.current !== myGeneration) return;
+
+    if (outcome === "timeout") {
+      setDetectionState("not-detected");
+      return;
+    }
+    if (detectDebugEnabled) setDebugCandidates(outcome.candidates);
+
+    const corners = outcome.corners;
+    const cal = corners ? computeCalibration(forRefId, corners, null) : null;
+    if (!corners || !cal) {
+      setDetectionState("not-detected");
+      return;
+    }
     setCalPoints(corners);
-    setCalibrationSource("auto");
+    setDetectionState("detected");
     onCalibrationChange({
       imageUrl: nextImage.url,
       imageWidth: nextImage.w,
@@ -160,11 +197,13 @@ export function PhotoMeasureSession({
 
   function handleReferenceChange(value: string) {
     const next = value as ReferenceId;
+    detectionGenerationRef.current += 1; // supersede any in-flight detection for the old reference
     setRefId(next);
     setCalPoints([]);
     setSelectedIndex(null);
     setError(null);
-    setCalibrationSource(null);
+    setDetectionState("idle");
+    setDebugCandidates([]);
     if (isPaperReference(next)) {
       if (typeof window !== "undefined") window.localStorage.setItem(PAPER_SIZE_STORAGE_KEY, next);
       if (image) {
@@ -176,13 +215,18 @@ export function PhotoMeasureSession({
   }
 
   function clearForManualCalibration() {
+    detectionGenerationRef.current += 1; // the user opted out -- ignore any late detection result
     setCalPoints([]);
     setSelectedIndex(null);
     setError(null);
-    setCalibrationSource("manual");
+    setDetectionState("manual");
   }
 
   function handleCalPointsChange(next: Point[]) {
+    // Any direct user interaction with calibration points (manual tap, or
+    // dragging/nudging an auto-detected one) supersedes a still-running
+    // detection -- it must never overwrite what the user is doing now.
+    detectionGenerationRef.current += 1;
     setCalPoints(next);
     if (!image) return;
     const required = requiredCalPoints(refId);
@@ -254,6 +298,16 @@ export function PhotoMeasureSession({
     }
   }
 
+  const debugQuads = detectDebugEnabled
+    ? debugCandidates
+        .filter((c) => c.points.length === 4)
+        .map((c) => ({
+          points: c.points,
+          color: c.accepted ? "#16a34a" : "#dc2626",
+          label: `${c.reason}${c.ratioError != null ? ` (Δ${(c.ratioError * 100).toFixed(0)}%)` : ""}`,
+        }))
+    : undefined;
+
   const stage = image ? (
     <PhotoStage
       key={image.url}
@@ -269,6 +323,7 @@ export function PhotoMeasureSession({
       onSelectedIndexChange={setSelectedIndex}
       fitSignal={fitSignal}
       extraSegments={extraSegments}
+      debugQuads={debugQuads}
     />
   ) : (
     <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 rounded-lg border bg-white px-6 text-center text-sm text-muted-foreground sm:min-h-[420px]">
@@ -314,16 +369,24 @@ export function PhotoMeasureSession({
               ? "Tap the two ends of a known length. Shoot straight overhead for best accuracy."
               : `Tap the card's 4 corners in order: ${CORNER_ORDER.join(" → ")}.`}
         </p>
-        {detecting && (
-          <p className="text-xs font-medium text-sky-700">Looking for the paper in your photo…</p>
+        {detectionState === "detecting" && (
+          <p className="flex items-center gap-1.5 text-xs font-medium text-sky-700">
+            <span className="size-2 animate-pulse rounded-full bg-sky-500" aria-hidden="true" />
+            Detecting sheet…
+          </p>
         )}
-        {calibrationSource === "auto" && (
+        {detectionState === "detected" && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
             <span>Paper detected — drag a corner to adjust if it&apos;s off.</span>
             <Button size="xs" variant="outline" onClick={clearForManualCalibration}>
               Looks wrong? Place manually
             </Button>
           </div>
+        )}
+        {detectionState === "not-detected" && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Couldn&apos;t detect the sheet automatically — tap its four corners.
+          </p>
         )}
         <div className="space-y-2">
           <Label htmlFor="reference-object">Reference object</Label>

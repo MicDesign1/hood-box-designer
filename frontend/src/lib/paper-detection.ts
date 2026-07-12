@@ -25,6 +25,28 @@ const ASPECT_TOLERANCE_RATIO = 0.12;
 const MIN_AREA_FRACTION = 0.08;
 const MAX_AREA_FRACTION = 0.97;
 const WORK_MAX_DIM = 900;
+// Debug mode (?detectDebug=1) relaxes the area floor so near-miss candidates
+// are still visible, but a genuinely noisy photo can produce hundreds of
+// spurious micro-contours -- floor and cap those out so the overlay (and
+// the extra Mat work behind it) stays usable.
+const DEBUG_MIN_AREA_FRACTION = 0.02;
+const DEBUG_MAX_CANDIDATES = 40;
+
+/** A 4-point quad opencv considered, kept only when opts.collectDebug is set
+ * (see ?detectDebug=1 in PhotoMeasureSession) — for visualizing why
+ * detection picked what it picked, or rejected everything. */
+export interface PaperCandidate {
+  points: Point[];
+  areaFraction: number;
+  ratioError: number | null;
+  accepted: boolean;
+  reason: string;
+}
+
+export interface PaperDetectionResult {
+  corners: Point[] | null;
+  candidates: PaperCandidate[];
+}
 
 let cvPromise: Promise<OpenCv> | null = null;
 
@@ -56,19 +78,26 @@ async function loadCv(): Promise<OpenCv> {
  * Finds the best paper-shaped quadrilateral in an image and returns its 4
  * corners in full-resolution image-pixel coordinates, angle-sorted (see
  * sortCornersByAngle) so they can be fed straight into computeCalibration().
- * Returns null on any failure (no candidate found, opencv.js failed to
+ * `corners` is null on any failure (no candidate found, opencv.js failed to
  * load, coordinates degenerate) — callers must fall back to manual corner
- * placement silently, never surface an error for this.
+ * placement silently, never surface a blocking error for this.
+ *
+ * Pass `collectDebug: true` to also get every 4-point quad opencv considered
+ * with its accept/reject reason (dev-only debug overlay use; skipped by
+ * default since it does extra work classifying rejects that production
+ * doesn't need).
  */
 export async function detectPaperCorners(
   image: HTMLImageElement,
   aspect: PaperAspect,
-): Promise<Point[] | null> {
+  opts: { collectDebug?: boolean } = {},
+): Promise<PaperDetectionResult> {
+  const candidates: PaperCandidate[] = [];
   let cv: OpenCv;
   try {
     cv = await loadCv();
   } catch {
-    return null;
+    return { corners: null, candidates };
   }
 
   const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
@@ -87,7 +116,7 @@ export async function detectPaperCorners(
     canvas.width = workW;
     canvas.height = workH;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+    if (!ctx) return { corners: null, candidates };
     ctx.drawImage(image, 0, 0, workW, workH);
 
     src = cv.imread(canvas);
@@ -104,7 +133,9 @@ export async function detectPaperCorners(
       const contour = contours.get(i);
       const area = cv.contourArea(contour);
       const areaFraction = area / workArea;
-      if (areaFraction < MIN_AREA_FRACTION || areaFraction > MAX_AREA_FRACTION) {
+      const areaOk = areaFraction >= MIN_AREA_FRACTION && areaFraction <= MAX_AREA_FRACTION;
+      const worthDebugging = opts.collectDebug && areaFraction >= DEBUG_MIN_AREA_FRACTION && candidates.length < DEBUG_MAX_CANDIDATES;
+      if (!areaOk && !worthDebugging) {
         contour.delete();
         continue;
       }
@@ -112,8 +143,9 @@ export async function detectPaperCorners(
       const peri = cv.arcLength(contour, true);
       const approx = new cv.Mat();
       cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+      const isQuad = approx.rows === 4 && cv.isContourConvex(approx);
 
-      if (approx.rows === 4 && cv.isContourConvex(approx)) {
+      if (isQuad) {
         const rawPts: Point[] = [];
         for (let r = 0; r < 4; r++) {
           rawPts.push({ x: approx.data32S[r * 2]! / scale, y: approx.data32S[r * 2 + 1]! / scale });
@@ -124,23 +156,60 @@ export async function detectPaperCorners(
         const long = Math.max(side0, side1);
         const short = Math.min(side0, side1);
 
-        if (short > 0) {
+        let ratioError: number | null = null;
+        let accepted = false;
+        let reason = "";
+
+        if (!areaOk) {
+          reason = areaFraction < MIN_AREA_FRACTION ? "area too small" : "area too large";
+        } else if (short <= 0) {
+          reason = "degenerate (zero-length side)";
+        } else {
           const measuredRatio = long / short;
-          const ratioError = Math.abs(measuredRatio - aspect.ratio) / aspect.ratio;
-          if (ratioError <= ASPECT_TOLERANCE_RATIO) {
+          ratioError = Math.abs(measuredRatio - aspect.ratio) / aspect.ratio;
+          if (ratioError > ASPECT_TOLERANCE_RATIO) {
+            reason = `aspect ratio mismatch (Δ=${(ratioError * 100).toFixed(0)}%)`;
+          } else {
             const score = ratioError - areaFraction * 0.1;
-            if (!best || score < best.score) best = { pts: sorted, score };
+            if (!best || score < best.score) {
+              best = { pts: sorted, score };
+              accepted = true;
+              reason = "accepted (best so far)";
+            } else {
+              reason = "matched, but lower score than another candidate";
+            }
           }
         }
+
+        if (opts.collectDebug && candidates.length < DEBUG_MAX_CANDIDATES) {
+          candidates.push({ points: sorted, areaFraction, ratioError, accepted, reason });
+        }
+      } else if (opts.collectDebug && areaOk && candidates.length < DEBUG_MAX_CANDIDATES) {
+        candidates.push({
+          points: [],
+          areaFraction,
+          ratioError: null,
+          accepted: false,
+          reason: approx.rows === 4 ? "not convex" : `not a quad (${approx.rows} pts)`,
+        });
       }
 
       approx.delete();
       contour.delete();
     }
 
-    return best ? best.pts : null;
+    // second pass: only the true best-scoring candidate should read as
+    // "accepted" once every candidate has been scored (the loop above marks
+    // provisional bests as it goes, which can be superseded later).
+    if (opts.collectDebug) {
+      for (const c of candidates) {
+        c.accepted = best != null && c.points.length === 4 && c.points === best.pts;
+      }
+    }
+
+    return { corners: best ? best.pts : null, candidates };
   } catch {
-    return null;
+    return { corners: null, candidates };
   } finally {
     kernel.delete();
     src?.delete();

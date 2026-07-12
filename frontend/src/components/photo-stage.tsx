@@ -30,6 +30,10 @@ export interface PhotoStageProps {
   fitSignal: number;
   /** Passive, non-interactive segments from prior measurements (e.g. other fields already measured). */
   extraSegments?: { ptA: Point; ptB: Point; label: string }[];
+  /** Dev-only debug visualization (?detectDebug=1) of quads a detector
+   * considered; not rendered by default. Purely additive -- no effect on
+   * normal interaction when omitted. */
+  debugQuads?: { points: Point[]; color: string; label?: string }[];
 }
 
 interface ViewBox {
@@ -88,6 +92,7 @@ export function PhotoStage({
   onSelectedIndexChange,
   fitSignal,
   extraSegments,
+  debugQuads,
 }: PhotoStageProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -446,6 +451,37 @@ export function PhotoStage({
               >
                 {seg.label}
               </text>
+            </g>
+          );
+        })}
+
+        {debugQuads?.map((q, i) => {
+          if (q.points.length < 3) return null;
+          const cx = q.points.reduce((s, p) => s + p.x, 0) / q.points.length;
+          const cy = q.points.reduce((s, p) => s + p.y, 0) / q.points.length;
+          return (
+            <g key={`debug-quad-${i}`} opacity={0.85}>
+              <polyline
+                points={[...q.points, q.points[0]!].map((p) => `${p.x},${p.y}`).join(" ")}
+                fill="none"
+                stroke={q.color}
+                strokeWidth={pointRadius * 0.22}
+              />
+              {q.label && (
+                <text
+                  x={cx}
+                  y={cy}
+                  textAnchor="middle"
+                  fontSize={fontSize * 0.8}
+                  fontWeight={600}
+                  fill={q.color}
+                  stroke="#ffffffdd"
+                  strokeWidth={fontSize * 0.15}
+                  paintOrder="stroke"
+                >
+                  {q.label}
+                </text>
+              )}
             </g>
           );
         })}
