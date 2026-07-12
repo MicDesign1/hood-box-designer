@@ -21,8 +21,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatFractionInches, parseImperialInput } from "@/lib/imperial";
+import { PAPER_ASPECT, detectPaperCorners } from "@/lib/paper-detection";
 import {
   CORNER_ORDER,
+  PAPER_REFERENCE_IDS,
   REFERENCE_OBJECTS,
   computeCalibration,
   measureInches,
@@ -35,6 +37,17 @@ import { cn } from "@/lib/utils";
 import type { LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "./types";
 
 const NUDGE_STEP = 1;
+const PAPER_SIZE_STORAGE_KEY = "photoMeasure:paperRefId";
+
+function isPaperReference(id: ReferenceId): boolean {
+  return (PAPER_REFERENCE_IDS as ReferenceId[]).includes(id);
+}
+
+function loadRememberedPaperRefId(): ReferenceId | null {
+  if (typeof window === "undefined") return null;
+  const stored = window.localStorage.getItem(PAPER_SIZE_STORAGE_KEY);
+  return stored === "sheet" || stored === "a4" ? stored : null;
+}
 
 export function PhotoMeasureSession({
   dimensions,
@@ -54,7 +67,9 @@ export function PhotoMeasureSession({
       : null,
   );
   const [fitSignal, setFitSignal] = useState(0);
-  const [refId, setRefId] = useState<ReferenceId>(initialCalibration?.refId ?? "sheet");
+  const [refId, setRefId] = useState<ReferenceId>(
+    () => initialCalibration?.refId ?? loadRememberedPaperRefId() ?? "sheet",
+  );
   const [customLengthInput, setCustomLengthInput] = useState(
     initialCalibration?.customLengthInches != null ? String(initialCalibration.customLengthInches) : "",
   );
@@ -65,6 +80,10 @@ export function PhotoMeasureSession({
   const [activeFieldIndex, setActiveFieldIndex] = useState(0);
   const [locked, setLocked] = useState<Record<string, LockedMeasurement>>({});
   const [error, setError] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const [calibrationSource, setCalibrationSource] = useState<"auto" | "manual" | null>(
+    initialCalibration ? "manual" : null,
+  );
 
   const customLengthInches = parseImperialInput(customLengthInput);
   const calibration: Calibration | null = image ? computeCalibration(refId, calPoints, customLengthInches) : null;
@@ -92,7 +111,30 @@ export function PhotoMeasureSession({
     setTool("calibrate");
     setSelectedIndex(null);
     setError(null);
+    setCalibrationSource(null);
     setFitSignal((s) => s + 1);
+  }
+
+  async function tryAutoDetectPaper(imgEl: HTMLImageElement, nextImage: PhotoImage, forRefId: ReferenceId) {
+    if (!isPaperReference(forRefId)) return;
+    const aspect = PAPER_ASPECT[forRefId];
+    if (!aspect) return;
+    setDetecting(true);
+    const corners = await detectPaperCorners(imgEl, aspect);
+    setDetecting(false);
+    if (!corners) return; // silent fallback -- manual placement stays available
+    const cal = computeCalibration(forRefId, corners, null);
+    if (!cal) return;
+    setCalPoints(corners);
+    setCalibrationSource("auto");
+    onCalibrationChange({
+      imageUrl: nextImage.url,
+      imageWidth: nextImage.w,
+      imageHeight: nextImage.h,
+      refId: forRefId,
+      calPoints: corners,
+      customLengthInches: null,
+    });
   }
 
   function loadFile(file: File) {
@@ -100,7 +142,11 @@ export function PhotoMeasureSession({
     reader.onload = () => {
       const url = reader.result as string;
       const probe = new Image();
-      probe.onload = () => resetForNewImage({ url, w: probe.naturalWidth, h: probe.naturalHeight });
+      probe.onload = () => {
+        const nextImage: PhotoImage = { url, w: probe.naturalWidth, h: probe.naturalHeight };
+        resetForNewImage(nextImage);
+        void tryAutoDetectPaper(probe, nextImage, refId);
+      };
       probe.src = url;
     };
     reader.readAsDataURL(file);
@@ -113,10 +159,27 @@ export function PhotoMeasureSession({
   }
 
   function handleReferenceChange(value: string) {
-    setRefId(value as ReferenceId);
+    const next = value as ReferenceId;
+    setRefId(next);
     setCalPoints([]);
     setSelectedIndex(null);
     setError(null);
+    setCalibrationSource(null);
+    if (isPaperReference(next)) {
+      if (typeof window !== "undefined") window.localStorage.setItem(PAPER_SIZE_STORAGE_KEY, next);
+      if (image) {
+        const img = new Image();
+        img.onload = () => void tryAutoDetectPaper(img, image, next);
+        img.src = image.url;
+      }
+    }
+  }
+
+  function clearForManualCalibration() {
+    setCalPoints([]);
+    setSelectedIndex(null);
+    setError(null);
+    setCalibrationSource("manual");
   }
 
   function handleCalPointsChange(next: Point[]) {
@@ -245,12 +308,23 @@ export function PhotoMeasureSession({
       <div className="space-y-3 rounded-xl border bg-card p-4">
         <p className="text-sm font-semibold">Scale reference</p>
         <p className="text-xs text-muted-foreground">
-          {refId === "sheet"
-            ? "Lay a letter-size sheet flat on the same surface, fully visible, then tap its four corners."
+          {isPaperReference(refId)
+            ? "Lay the sheet flat on the same surface, fully visible — corners are detected automatically, or tap all four yourself."
             : refId === "custom"
               ? "Tap the two ends of a known length. Shoot straight overhead for best accuracy."
               : `Tap the card's 4 corners in order: ${CORNER_ORDER.join(" → ")}.`}
         </p>
+        {detecting && (
+          <p className="text-xs font-medium text-sky-700">Looking for the paper in your photo…</p>
+        )}
+        {calibrationSource === "auto" && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <span>Paper detected — drag a corner to adjust if it&apos;s off.</span>
+            <Button size="xs" variant="outline" onClick={clearForManualCalibration}>
+              Looks wrong? Place manually
+            </Button>
+          </div>
+        )}
         <div className="space-y-2">
           <Label htmlFor="reference-object">Reference object</Label>
           <Select value={refId} onValueChange={handleReferenceChange}>

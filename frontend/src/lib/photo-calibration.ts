@@ -7,7 +7,7 @@ export interface Point {
   y: number;
 }
 
-export type ReferenceId = "sheet" | "poker" | "credit" | "custom";
+export type ReferenceId = "sheet" | "a4" | "poker" | "credit" | "custom";
 
 export interface ReferenceObject {
   id: ReferenceId;
@@ -18,10 +18,14 @@ export interface ReferenceObject {
 
 export const REFERENCE_OBJECTS: ReferenceObject[] = [
   { id: "sheet", label: "Letter-size sheet (8.5 × 11 in)", dimensions: [8.5, 11] },
+  { id: "a4", label: "A4 sheet (210 × 297 mm)", dimensions: [8.268, 11.693] },
   { id: "poker", label: "Poker playing card", dimensions: [2.5, 3.5] },
   { id: "credit", label: "Credit card (ID-1)", dimensions: [3.37, 2.125] },
   { id: "custom", label: "Known length (2 points)", dimensions: null },
 ];
+
+/** Reference IDs that are automatic-paper-detection candidates (rectangular sheets, not cards/custom). */
+export const PAPER_REFERENCE_IDS: ReferenceId[] = ["sheet", "a4"];
 
 export const CORNER_ORDER = ["top-left", "top-right", "bottom-right", "bottom-left"] as const;
 
