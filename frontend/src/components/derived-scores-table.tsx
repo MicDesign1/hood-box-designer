@@ -56,8 +56,8 @@ function buildDerivedRows(derived: DerivedValues): DerivedRow[] {
 
   push("Length panel", getDerivedNumber(derived, "panel_L"), "L + t");
   push("Width panel", getDerivedNumber(derived, "panel_W"), "W + t");
-  push("Depth score", getDerivedNumber(derived, "depth_score"), "H + t");
-  push("Flap depth", getFlapDepth(derived));
+  push("Height score", getDerivedNumber(derived, "depth_score"), "H + t");
+  push("Flap height", getFlapDepth(derived));
   push("Glue tab", getDerivedNumber(derived, "glue_tab"));
   push("Slot width", getDerivedNumber(derived, "slot_width"));
   push("Fillet radius", getDerivedNumber(derived, "fillet_radius"));
@@ -137,8 +137,8 @@ export function DerivedScoresTable({ derived }: DerivedScoresTableProps) {
       </table>
 
       <p className="border-t bg-muted/20 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        Scoring model: panels = inside dim + caliper (t); depth score = height + caliper;
-        flap depth follows the active FEFCO style from width + caliper. Verify against your
+        Scoring model: panels = inside dim + caliper (t); height score = height + caliper;
+        flap height follows the active FEFCO style from width + caliper. Verify against your
         plant&apos;s flute allowance chart before cutting a die.
       </p>
     </div>

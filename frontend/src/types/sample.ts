@@ -19,6 +19,16 @@ export interface SampleMeasurements {
   flapHeight: string;
 }
 
+export type DimensionStandard = "ID" | "OD";
+
+export interface RawMeasurement {
+  /** Full-precision inches exactly as measured from the photo — immutable
+   * once captured. Never rounded, snapped, or padded; the `measurements`
+   * string fields above are a separate, display/editable derivation. */
+  raw: number;
+  dimensionStandard: DimensionStandard;
+}
+
 export interface SolveResponse {
   style: SampleStyle;
   flute: string;
@@ -52,6 +62,19 @@ export interface SampleWizardState {
   hasSeam: boolean | null;
   flute: SampleFlute | null;
   measurements: SampleMeasurements;
+  /** Immutable raw capture per field, keyed the same as `measurements`.
+   * Populated only for fields measured from a photo; hand-typed fields have
+   * no raw record since the typed string is already the ground truth. */
+  rawMeasurements: Partial<Record<keyof SampleMeasurements, RawMeasurement>>;
+  /**
+   * TODO(owner): confirm this default. This flow measures panel creases,
+   * which the solver converts to inside dimensions (solver.py
+   * _depth_from_panel_d / _length_from_panel_width use panel-to-crease
+   * allowance subtraction), so "ID" matches how this flow actually measures
+   * today. Surfaced as a toggle at capture time in case a given sample is
+   * measured against outside faces instead.
+   */
+  dimensionStandard: DimensionStandard;
   extraMeasurement: string;
   solveResult: SolveResponse | null;
   displayLabel: string | null;
@@ -71,6 +94,8 @@ export const INITIAL_SAMPLE_STATE: SampleWizardState = {
     blankHeight: "",
     flapHeight: "",
   },
+  rawMeasurements: {},
+  dimensionStandard: "ID",
   extraMeasurement: "",
   solveResult: null,
   displayLabel: null,

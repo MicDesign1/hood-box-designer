@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   downloadDxfFromPayload,
   downloadSvgFromPayload,
@@ -44,6 +45,7 @@ import {
   fetchDielineSvgFromPayload,
 } from "@/lib/dieline";
 import { formatBlankSize, formatDimensionSummary, formatFractionInches, parseImperialInput } from "@/lib/imperial";
+import { applyPhotoLock, MEASUREMENT_FIELD_LABELS } from "@/lib/sample-capture";
 import {
   confidenceLabel,
   extraMeasurementKind,
@@ -56,6 +58,7 @@ import {
 } from "@/lib/solve";
 import {
   INITIAL_SAMPLE_STATE,
+  type DimensionStandard,
   type SampleFlute,
   type SampleJoint,
   type SampleMeasurements,
@@ -370,8 +373,8 @@ export function SampleWizard() {
 
   function handlePhotoLockDimension(key: string, result: LockedMeasurement) {
     const field = key as keyof SampleMeasurements;
-    updateMeasurement(field, result.inches.toFixed(2));
     setPhotoSegments((current) => ({ ...current, [field]: result.segment }));
+    setState((current) => applyPhotoLock(current, field, result));
   }
 
   async function submitMeasurements() {
@@ -547,6 +550,21 @@ export function SampleWizard() {
                 One photo, calibrate once, then measure the height panel and both panel widths in the same
                 session.
               </p>
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Measuring inside or outside faces?</span>
+                <Select
+                  value={state.dimensionStandard}
+                  onValueChange={(v) => setState((c) => ({ ...c, dimensionStandard: v as DimensionStandard }))}
+                >
+                  <SelectTrigger className="h-8 w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ID">Inside (ID)</SelectItem>
+                    <SelectItem value="OD">Outside (OD)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Button
                 variant="outline"
                 className="mt-3 w-full"
@@ -710,6 +728,28 @@ export function SampleWizard() {
                 <p className="mt-3 text-sm text-muted-foreground">{state.solveResult.reason}</p>
               )}
             </div>
+
+            {Object.keys(state.rawMeasurements).length > 0 && (
+              <details className="rounded-xl border bg-card px-4 py-3">
+                <summary className="cursor-pointer text-sm font-medium">As measured (raw, from photo)</summary>
+                <div className="mt-3 space-y-1 text-sm">
+                  {(Object.entries(state.rawMeasurements) as [keyof SampleMeasurements, { raw: number; dimensionStandard: string }][]).map(
+                    ([field, m]) => (
+                      <div key={field} className="flex justify-between border-b border-dashed pb-1 last:border-0">
+                        <span className="text-muted-foreground">{MEASUREMENT_FIELD_LABELS[field]}</span>
+                        <span className="font-mono">
+                          {formatFractionInches(m.raw, 16)}&quot; ({m.dimensionStandard})
+                        </span>
+                      </div>
+                    ),
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Captured directly from the photo at full precision — never rounded or padded. The length ×
+                  width × height above is computed from these via the flute&apos;s scoring allowances.
+                </p>
+              </details>
+            )}
 
             {needsExtraMeasurement(state.solveResult) && (
               <Card>
