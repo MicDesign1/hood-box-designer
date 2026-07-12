@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
+  Camera,
   Check,
   ClipboardCopy,
   Download,
@@ -24,12 +25,13 @@ import {
   PanelOneDiagram,
   PanelTwoDiagram,
 } from "@/components/sample/measurement-diagrams";
-import {
-  PhotoMeasureLauncher,
-  PhotoMeasureOverlay,
-  type PhotoCalibration,
-  type PhotoSegment,
-} from "@/components/sample/photo-measure";
+import { PhotoMeasureSession } from "@/components/PhotoMeasure/PhotoMeasureSession";
+import type {
+  DimensionField,
+  LockedMeasurement,
+  PhotoCalibrationCapture,
+  PhotoSegment,
+} from "@/components/PhotoMeasure/types";
 import { FluteProfile, StyleDiagram } from "@/components/sample/style-diagrams";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -198,13 +200,12 @@ export function SampleWizard() {
   >({});
   const [exportingDxf, setExportingDxf] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [photoCalibration, setPhotoCalibration] = useState<PhotoCalibration | null>(null);
+  const [photoCalibration, setPhotoCalibration] = useState<PhotoCalibrationCapture | null>(null);
   const [photoSegments, setPhotoSegments] = useState<
     Partial<Record<keyof SampleMeasurements, PhotoSegment>>
   >({});
-  const [photoOverlayOpen, setPhotoOverlayOpen] = useState(false);
-  const [photoOverlayMode, setPhotoOverlayMode] = useState<"calibrate" | "measure">("calibrate");
-  const [photoMeasureField, setPhotoMeasureField] = useState<keyof SampleMeasurements | null>(null);
+  const [photoSessionOpen, setPhotoSessionOpen] = useState(false);
+  const [photoSessionDimensions, setPhotoSessionDimensions] = useState<DimensionField[]>([]);
 
   const reset = useCallback(() => {
     setState(INITIAL_SAMPLE_STATE);
@@ -219,8 +220,8 @@ export function SampleWizard() {
     setCopied(false);
     setPhotoCalibration(null);
     setPhotoSegments({});
-    setPhotoOverlayOpen(false);
-    setPhotoMeasureField(null);
+    setPhotoSessionOpen(false);
+    setPhotoSessionDimensions([]);
   }, []);
 
   const runSolve = useCallback(async (next: SampleWizardState) => {
@@ -338,39 +339,40 @@ export function SampleWizard() {
     setState((current) => ({ ...current, flute, step: "measurements" }));
   }
 
-  function openPhotoCalibrate() {
-    setPhotoOverlayMode("calibrate");
-    setPhotoMeasureField(null);
-    setPhotoOverlayOpen(true);
-  }
-
-  function openPhotoMeasure(field: keyof SampleMeasurements) {
-    if (!photoCalibration) {
-      openPhotoCalibrate();
-      return;
+  function requiredPhotoDimensions(): DimensionField[] {
+    if (state.style === "tube") {
+      return [
+        { key: "blankHeight", label: "Blank height", hint: "Bottom edge to top edge — this is the tube height" },
+        { key: "panel1", label: "First panel width" },
+        { key: "panel2", label: "Second panel width" },
+      ];
     }
-    setPhotoOverlayMode("measure");
-    setPhotoMeasureField(field);
-    setPhotoOverlayOpen(true);
+    return [
+      { key: "panelD", label: "Height panel", hint: "Middle panel, top crease to bottom crease" },
+      { key: "panel1", label: "First panel width" },
+      { key: "panel2", label: "Second panel width" },
+    ];
   }
 
-  function handlePhotoMeasureComplete(
-    field: keyof SampleMeasurements,
-    inches: number,
-    segment: PhotoSegment,
-  ) {
-    updateMeasurement(field, inches.toFixed(2));
-    setPhotoSegments((current) => ({ ...current, [field]: segment }));
+  function optionalPhotoDimensions(): DimensionField[] {
+    const dims: DimensionField[] = [{ key: "blankWidth", label: "Blank width" }];
+    if (state.style !== "tube") {
+      dims.push({ key: "blankHeight", label: "Blank height (cross-check)" });
+      dims.push({ key: "flapHeight", label: "Flap height" });
+    }
+    return dims;
   }
 
-  const photoFieldLabels: Record<keyof SampleMeasurements, string> = {
-    panelD: "Height panel",
-    panel1: "First panel width",
-    panel2: "Second panel width",
-    blankWidth: "Blank width",
-    blankHeight: "Blank height",
-    flapHeight: "Flap height",
-  };
+  function openPhotoSession(dimensions: DimensionField[]) {
+    setPhotoSessionDimensions(dimensions);
+    setPhotoSessionOpen(true);
+  }
+
+  function handlePhotoLockDimension(key: string, result: LockedMeasurement) {
+    const field = key as keyof SampleMeasurements;
+    updateMeasurement(field, result.inches.toFixed(2));
+    setPhotoSegments((current) => ({ ...current, [field]: result.segment }));
+  }
 
   async function submitMeasurements() {
     await runSolve(state);
@@ -539,10 +541,21 @@ export function SampleWizard() {
               </p>
             </div>
 
-            <PhotoMeasureLauncher
-              hasCalibration={photoCalibration !== null}
-              onOpenCalibrate={openPhotoCalibrate}
-            />
+            <div className="rounded-xl border border-dashed bg-card p-4">
+              <p className="text-sm font-medium">Measure from photo</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                One photo, calibrate once, then measure the height panel and both panel widths in the same
+                session.
+              </p>
+              <Button
+                variant="outline"
+                className="mt-3 w-full"
+                onClick={() => openPhotoSession(requiredPhotoDimensions())}
+              >
+                <Camera className="size-4" />
+                {photoCalibration ? "Open photo / recalibrate" : "Take or choose photo"}
+              </Button>
+            </div>
 
             {state.style !== "tube" ? (
               <MeasureField
@@ -552,7 +565,7 @@ export function SampleWizard() {
                 onChange={(v) => updateMeasurement("panelD", v)}
                 diagram={<PanelDDiagram className="mx-auto h-28 w-24" />}
                 onMeasure={
-                  photoCalibration ? () => openPhotoMeasure("panelD") : undefined
+                  photoCalibration ? () => openPhotoSession(requiredPhotoDimensions()) : undefined
                 }
               />
             ) : (
@@ -563,9 +576,7 @@ export function SampleWizard() {
                 onChange={(v) => updateMeasurement("blankHeight", v)}
                 diagram={<BlankHeightDiagram className="mx-auto h-28 w-24" />}
                 onMeasure={
-                  photoCalibration
-                    ? () => openPhotoMeasure("blankHeight")
-                    : undefined
+                  photoCalibration ? () => openPhotoSession(requiredPhotoDimensions()) : undefined
                 }
               />
             )}
@@ -581,7 +592,7 @@ export function SampleWizard() {
               onChange={(v) => updateMeasurement("panel1", v)}
               diagram={<PanelOneDiagram className="mx-auto h-20 w-full max-w-xs" />}
               onMeasure={
-                photoCalibration ? () => openPhotoMeasure("panel1") : undefined
+                photoCalibration ? () => openPhotoSession(requiredPhotoDimensions()) : undefined
               }
             />
 
@@ -592,7 +603,7 @@ export function SampleWizard() {
               onChange={(v) => updateMeasurement("panel2", v)}
               diagram={<PanelTwoDiagram className="mx-auto h-20 w-full max-w-xs" />}
               onMeasure={
-                photoCalibration ? () => openPhotoMeasure("panel2") : undefined
+                photoCalibration ? () => openPhotoSession(requiredPhotoDimensions()) : undefined
               }
             />
 
@@ -618,9 +629,7 @@ export function SampleWizard() {
                     )
                   }
                   onMeasure={
-                    photoCalibration
-                      ? () => openPhotoMeasure("blankWidth")
-                      : undefined
+                    photoCalibration ? () => openPhotoSession(optionalPhotoDimensions()) : undefined
                   }
                 />
                 {state.style !== "tube" && (
@@ -632,9 +641,7 @@ export function SampleWizard() {
                       onChange={(v) => updateMeasurement("blankHeight", v)}
                       diagram={<BlankHeightDiagram className="mx-auto h-28 w-24" />}
                       onMeasure={
-                        photoCalibration
-                          ? () => openPhotoMeasure("blankHeight")
-                          : undefined
+                        photoCalibration ? () => openPhotoSession(optionalPhotoDimensions()) : undefined
                       }
                     />
                     <MeasureField
@@ -650,9 +657,7 @@ export function SampleWizard() {
                         )
                       }
                       onMeasure={
-                        photoCalibration
-                          ? () => openPhotoMeasure("flapHeight")
-                          : undefined
+                        photoCalibration ? () => openPhotoSession(optionalPhotoDimensions()) : undefined
                       }
                     />
                   </>
@@ -853,22 +858,17 @@ export function SampleWizard() {
         )}
       </main>
 
-      <PhotoMeasureOverlay
-        open={photoOverlayOpen}
-        mode={photoOverlayMode}
-        measureFieldLabel={
-          photoMeasureField ? photoFieldLabels[photoMeasureField] : undefined
-        }
-        calibration={photoCalibration}
-        segments={photoSegments}
-        measureField={photoMeasureField}
-        onClose={() => {
-          setPhotoOverlayOpen(false);
-          setPhotoMeasureField(null);
-        }}
-        onCalibrationComplete={(cal) => setPhotoCalibration(cal)}
-        onMeasureComplete={handlePhotoMeasureComplete}
-      />
+      {photoSessionOpen && (
+        <PhotoMeasureSession
+          dimensions={photoSessionDimensions}
+          presentation="overlay"
+          initialCalibration={photoCalibration}
+          onLockDimension={handlePhotoLockDimension}
+          onCalibrationChange={(cal: PhotoCalibrationCapture) => setPhotoCalibration(cal)}
+          onComplete={() => setPhotoSessionOpen(false)}
+          onCancel={() => setPhotoSessionOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -40,9 +40,33 @@ interface ViewBox {
 }
 
 const FIT_MARGIN_RATIO = 0.05;
+// Touch-target radius for grabbing an existing point, in real screen px
+// (independent of zoom/container size) — 26px radius = 52px diameter,
+// clearing the 44x44px minimum touch-target guideline. The visual dot stays
+// small (see DOT_MIN_SCREEN_PX/DOT_MAX_SCREEN_PX) so this hit area is larger
+// than what's drawn, which is intentional.
 const HIT_RADIUS_SCREEN_PX = 26;
 const LOUPE_SIZE = 130;
 const LOUPE_ZOOM = 3;
+
+// Label/dot sizing targets real screen px, scaled between these bounds by
+// container width, then converted into viewBox units at render time. Using
+// vb.w alone (the old approach) produced screen text that shrank with the
+// container — legible on desktop, ~5-6px and unreadable at a 390px phone
+// width.
+const LABEL_FONT_MIN_SCREEN_PX = 14;
+const LABEL_FONT_MAX_SCREEN_PX = 18;
+const DOT_MIN_SCREEN_PX = 6;
+const DOT_MAX_SCREEN_PX = 9;
+const NARROW_CONTAINER_PX = 320;
+const WIDE_CONTAINER_PX = 900;
+const LABEL_COLLISION_SCREEN_PX = 26;
+
+function widthScaledPx(containerWidthPx: number, minPx: number, maxPx: number): number {
+  if (!(containerWidthPx > 0)) return minPx;
+  const t = Math.min(1, Math.max(0, (containerWidthPx - NARROW_CONTAINER_PX) / (WIDE_CONTAINER_PX - NARROW_CONTAINER_PX)));
+  return minPx + t * (maxPx - minPx);
+}
 
 /**
  * A pannable/zoomable native-SVG viewer over an uploaded photo, supporting
@@ -80,6 +104,18 @@ export function PhotoStage({
     screenPxPerImagePx: number;
   } | null>(null);
   const [loadedImg, setLoadedImg] = useState<HTMLImageElement | null>(null);
+  const [renderWidthPx, setRenderWidthPx] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setRenderWidthPx(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const activePoints = tool === "calibrate" ? calPoints : measurePoints;
   const setActivePoints = tool === "calibrate" ? onCalPointsChange : onMeasurePointsChange;
@@ -290,14 +326,48 @@ export function PhotoStage({
 
   if (!vb) return null;
 
-  const pointRadius = vb.w / 130;
-  const fontSize = vb.w / 68;
+  // Screen-px targets converted into viewBox units so rendered size tracks
+  // real container width instead of vb.w (which shrinks on zoom-in and has
+  // no relationship to how large the container actually renders on screen).
+  const effectiveRenderWidthPx = renderWidthPx || vb.w;
+  const screenToVb = vb.w / effectiveRenderWidthPx;
+  const pointRadius = widthScaledPx(renderWidthPx, DOT_MIN_SCREEN_PX, DOT_MAX_SCREEN_PX) * screenToVb;
+  const fontSize = widthScaledPx(renderWidthPx, LABEL_FONT_MIN_SCREEN_PX, LABEL_FONT_MAX_SCREEN_PX) * screenToVb;
+  const labelCollisionVb = LABEL_COLLISION_SCREEN_PX * screenToVb;
   const calDone = calPoints.length >= maxCalPoints;
 
   const measurementPairs: [Point, Point][] = [];
   for (let i = 0; i + 1 < measurePoints.length; i += 2) {
     measurementPairs.push([measurePoints[i], measurePoints[i + 1]]);
   }
+
+  // Greedy label placement: default position is above the segment midpoint;
+  // if that collides with an already-placed label (crowded measurements on
+  // one photo), push it out perpendicular to the segment and draw a leader
+  // line back to the true midpoint instead of letting text overlap.
+  const placedLabels: { lx: number; ly: number }[] = [];
+  const labelPlacements = measurementPairs.map(([a, b], i) => {
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    let lx = mx;
+    let ly = my - pointRadius * 0.9;
+    let leader = false;
+    for (const other of placedLabels) {
+      if (Math.hypot(lx - other.lx, ly - other.ly) < labelCollisionVb) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const segLen = Math.hypot(dx, dy) || 1;
+        const nx = -dy / segLen;
+        const ny = dx / segLen;
+        const sign = i % 2 === 0 ? 1 : -1;
+        lx += nx * labelCollisionVb * 1.5 * sign;
+        ly += ny * labelCollisionVb * 1.5 * sign;
+        leader = true;
+      }
+    }
+    placedLabels.push({ lx, ly });
+    return { mx, my, lx, ly, leader };
+  });
 
   return (
     <div
@@ -381,16 +451,26 @@ export function PhotoStage({
         })}
 
         {measurementPairs.map(([a, b], i) => {
-          const mx = (a.x + b.x) / 2;
-          const my = (a.y + b.y) / 2;
           const inches = measureFn ? measureFn(a, b) : null;
           const label = inches != null ? `M${i + 1} ${formatFractionInches(inches, 16)}"` : `M${i + 1}`;
+          const placement = labelPlacements[i]!;
           return (
             <g key={`m-${i}`} opacity={tool === "measure" ? 1 : 0.55}>
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#0284c7" strokeWidth={pointRadius * 0.32} />
+              {placement.leader && (
+                <line
+                  x1={placement.mx}
+                  y1={placement.my}
+                  x2={placement.lx}
+                  y2={placement.ly}
+                  stroke="#0284c7"
+                  strokeWidth={pointRadius * 0.14}
+                  strokeDasharray={`${pointRadius * 0.25} ${pointRadius * 0.25}`}
+                />
+              )}
               <text
-                x={mx}
-                y={my - pointRadius * 0.9}
+                x={placement.lx}
+                y={placement.ly}
                 textAnchor="middle"
                 fontSize={fontSize * 1.05}
                 fontWeight={700}
