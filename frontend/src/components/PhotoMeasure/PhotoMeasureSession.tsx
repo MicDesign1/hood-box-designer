@@ -7,7 +7,6 @@ import {
   ArrowRight,
   ArrowUp,
   Camera,
-  Check,
   Ruler,
   Trash2,
   Undo2,
@@ -34,21 +33,17 @@ import {
   type ReferenceId,
 } from "@/lib/photo-calibration";
 import { cn } from "@/lib/utils";
-import type { CaptureMarker, CaptureRole, CaptureSession } from "@/types/capture";
-import type { LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "./types";
+import { isComplete, type CaptureMarker, type CaptureRole, type CaptureSession } from "@/types/capture";
+import type { DimensionField, LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "./types";
 
 const NUDGE_STEP = 1;
 
-// Phase 0 only: PhotoMeasureSession's `dimensions` prop is a flat
-// { key, label }[] with no role-kind metadata -- the marker-designation UI
-// that actually lets a user choose dimension/panel/reference per marker
-// doesn't exist yet (that's Phase 2/3). Until then, a key is inferred as a
-// direct-entry axis if it matches Design's fixed vocabulary, otherwise
-// treated as a Sample-style panel field. Every current caller
-// (photo-mode.tsx, sample-wizard.tsx) already only ever uses one of these
-// two closed vocabularies, so this is exact today, not a guess -- but it's
-// a stand-in this phase deliberately keeps narrow rather than have it
-// silently cover a case (reference roles) it isn't built for yet.
+// PhotoMeasureSession's `dimensions` prop is a flat { key, label }[] with no
+// role-kind metadata of its own -- a key is inferred as a direct-entry axis
+// if it matches Design's fixed vocabulary, otherwise treated as a
+// Sample-style panel field. Every current caller (photo-mode.tsx,
+// sample-wizard.tsx) already only ever uses one of these two closed
+// vocabularies, so this is exact today, not a guess.
 const DIRECT_DIMENSION_AXES = new Set(["length", "width", "height"]);
 
 function inferRoleForKey(key: string): CaptureRole {
@@ -62,12 +57,50 @@ function inferRoleForKey(key: string): CaptureRole {
 }
 
 /** The old `Record<string, LockedMeasurement>` key a role corresponds to,
- * or null for reference roles (which have no such key -- by design, nothing
- * upstream of Phase 2 can construct a reference role yet). */
+ * or null for reference roles (which have no such key -- reference markers
+ * don't participate in `onLockDimension`/`onComplete`'s payload; Phase 3
+ * adds the callback that surfaces them). */
 function roleLookupKey(role: CaptureRole): string | null {
   if (role.kind === "dimension") return role.axis;
   if (role.kind === "panel") return role.panelField;
   return null;
+}
+
+/** Dimension/panel roles are exclusive: assigning one to a new marker steals
+ * it from whichever marker held it before (matches the pre-unification
+ * photo-mode.tsx's assign-button behavior). Reference roles are never
+ * exclusive with each other -- a session can have any number of them. */
+function roleEquals(a: CaptureRole | null, b: CaptureRole): boolean {
+  if (!a || a.kind === "reference" || b.kind === "reference") return false;
+  if (a.kind === "dimension" && b.kind === "dimension") return a.axis === b.axis;
+  if (a.kind === "panel" && b.kind === "panel") return a.panelField === b.panelField;
+  return false;
+}
+
+function roleLabel(role: CaptureRole, dims: DimensionField[]): string {
+  if (role.kind === "reference") return role.label;
+  const key = roleLookupKey(role);
+  return dims.find((d) => d.key === key)?.label ?? key ?? "—";
+}
+
+/** Which of the method's required roles aren't kept yet -- drives the
+ * "Still need…" completion message. Mirrors `isComplete`'s rule exactly. */
+function missingRequiredLabels(session: CaptureSession, dims: DimensionField[]): string[] {
+  const kept = session.markers.filter((m) => m.role !== null && m.keep);
+  if (session.method === "direct") {
+    const axes = new Set<string>(kept.flatMap((m) => (m.role?.kind === "dimension" ? [m.role.axis] : [])));
+    return dims.filter((d) => DIRECT_DIMENSION_AXES.has(d.key) && !axes.has(d.key)).map((d) => d.label);
+  }
+  const panelFields = new Set(kept.flatMap((m) => (m.role?.kind === "panel" ? [m.role.panelField] : [])));
+  const missing: string[] = [];
+  for (const d of dims) {
+    if ((d.key === "panel1" || d.key === "panel2") && !panelFields.has(d.key)) missing.push(d.label);
+  }
+  if (!panelFields.has("panelD") && !panelFields.has("blankHeight")) {
+    const depthField = dims.find((d) => d.key === "panelD" || d.key === "blankHeight");
+    if (depthField) missing.push(depthField.label);
+  }
+  return missing;
 }
 const PAPER_SIZE_STORAGE_KEY = "photoMeasure:paperRefId";
 /** How long to wait for opencv to load + run before giving up and falling
@@ -131,9 +164,11 @@ export function PhotoMeasureSession({
   );
   const [calPoints, setCalPoints] = useState<Point[]>(initialCalibration?.calPoints ?? []);
   const [tool, setTool] = useState<"calibrate" | "measure">(initialCalibration ? "measure" : "calibrate");
+  // Only provisional (not-yet-role-assigned) points live here now. A pair
+  // becomes a CaptureMarker -- and leaves this array -- the moment the user
+  // assigns it a role; that's the lock action, there's no separate commit.
   const [measurePoints, setMeasurePoints] = useState<Point[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [activeFieldIndex, setActiveFieldIndex] = useState(0);
   // Source of truth for locked measurements is now the shared CaptureMarker
   // record, not a bare key->value map -- see `locked` below, which derives
   // the exact same Record<string, LockedMeasurement> shape every existing
@@ -166,15 +201,13 @@ export function PhotoMeasureSession({
   const maxCalPoints = requiredCalPoints(refId);
   const measureFn = calibration ? (a: Point, b: Point) => measureInches(calibration, a, b) : null;
 
-  // Phase 0: assembled for structural completeness (proves the session is
-  // genuinely representable, not just the marker array) but not yet
-  // exported or consumed by anything -- no external prop carries it out of
-  // this component. `method` is inferred from `presentation` for now: today
-  // embedded is always Design (direct-entry) and overlay is always Sample
-  // (panel-derived), 1:1, so this is exact, not a guess -- but it's a
-  // stand-in a future phase should replace with an explicit prop once a
-  // caller actually needs to declare it (e.g. once reference-dimension
-  // labeling needs the session's method to differ from its UI chrome).
+  // Drives the method-aware completion rule below (`isComplete`). Not yet
+  // exported to any prop -- no caller needs the full record out of this
+  // component until Phase 3's reference-dimension wiring. `method` is
+  // inferred from `presentation` for now: today embedded is always Design
+  // (direct-entry) and overlay is always Sample (panel-derived), 1:1, so
+  // this is exact, not a guess -- but it's a stand-in a future phase should
+  // replace with an explicit prop once a caller actually needs to declare it.
   const captureSession: CaptureSession = useMemo(
     () => ({
       id: sessionIdRef.current,
@@ -197,17 +230,29 @@ export function PhotoMeasureSession({
     [presentation, image, refId, calPoints, customLengthInches, markers],
   );
 
-  const activeField = dimensions[activeFieldIndex] ?? null;
-  const pendingInches =
-    measurePoints.length >= 2 && measureFn ? measureFn(measurePoints[0]!, measurePoints[1]!) : null;
-  const allLocked = dimensions.length > 0 && dimensions.every((d) => locked[d.key] != null);
+  // Free-placement pairs not yet assigned a role -- provisional, still
+  // draggable/nudgeable via the existing measure-tool point pool.
+  const provisionalPairs = useMemo(() => {
+    const pairs: { ptA: Point; ptB: Point; inches: number | null }[] = [];
+    for (let i = 0; i + 1 < measurePoints.length; i += 2) {
+      const ptA = measurePoints[i]!;
+      const ptB = measurePoints[i + 1]!;
+      pairs.push({ ptA, ptB, inches: measureFn ? measureFn(ptA, ptB) : null });
+    }
+    return pairs;
+  }, [measurePoints, measureFn]);
 
-  const extraSegments = dimensions
-    .filter((d) => d.key !== activeField?.key && locked[d.key])
-    .map((d) => {
-      const seg = locked[d.key]!.segment;
-      return { ptA: seg.ptA, ptB: seg.ptB, label: `${d.label}: ${formatFractionInches(seg.inches, 16)}"` };
-    });
+  const complete = isComplete(captureSession);
+  const missingLabels = missingRequiredLabels(captureSession, dimensions);
+
+  // Every assigned marker renders as a frozen, non-interactive segment
+  // (the same mechanism today's already-locked fields used) -- there's no
+  // more "current active field" to exclude, everything assigned shows.
+  const extraSegments = markers.map((m) => ({
+    ptA: m.ptA,
+    ptB: m.ptB,
+    label: `${roleLabel(m.role!, dimensions)}: ${formatFractionInches(m.rawInches, 16)}"${m.keep ? "" : " (not kept)"}`,
+  }));
 
   function resetForNewImage(nextImage: PhotoImage) {
     detectionGenerationRef.current += 1; // supersede any in-flight detection for the old photo
@@ -215,7 +260,6 @@ export function PhotoMeasureSession({
     setCalPoints([]);
     setMeasurePoints([]);
     setMarkers([]);
-    setActiveFieldIndex(0);
     setTool("calibrate");
     setSelectedIndex(null);
     setError(null);
@@ -379,45 +423,79 @@ export function PhotoMeasureSession({
     setSelectedIndex(null);
   }
 
-  function selectField(index: number) {
-    setActiveFieldIndex(index);
-    setMeasurePoints([]);
-    setSelectedIndex(null);
-    setTool("measure");
-  }
-
   function undoPending() {
     setMeasurePoints((points) => points.slice(0, -1));
     setSelectedIndex(null);
   }
 
-  function lockActiveField() {
-    if (!activeField || pendingInches == null) return;
-    const ptA = measurePoints[0]!;
-    const ptB = measurePoints[1]!;
-    const role = inferRoleForKey(activeField.key);
+  function nextReferenceLabel(): string {
+    const n = markers.filter((m) => m.role?.kind === "reference").length + 1;
+    return `Reference ${n}`;
+  }
+
+  // Assigning a role IS the lock action -- promotes a provisional pair into
+  // a permanent CaptureMarker and removes its points from the draggable
+  // pool. External contract unchanged: still emits the exact same
+  // LockedMeasurement shape callers already handle (reference roles have no
+  // key, so they never reach onLockDimension -- Phase 3's job).
+  function commitPendingPair(pairIndex: number, role: CaptureRole) {
+    const pair = provisionalPairs[pairIndex];
+    if (!pair || pair.inches == null) return;
     const marker: CaptureMarker = {
       id: `m${++markerIdCounterRef.current}`,
-      ptA,
-      ptB,
-      rawInches: pendingInches,
+      ptA: pair.ptA,
+      ptB: pair.ptB,
+      rawInches: pair.inches,
       role,
       keep: true,
     };
-    setMarkers((current) => [
-      ...current.filter((m) => !m.role || roleLookupKey(m.role) !== activeField.key),
-      marker,
-    ]);
-
-    // External contract unchanged: still emit the exact same
-    // LockedMeasurement shape callers already handle.
-    const segment: PhotoSegment = { ptA, ptB, inches: pendingInches };
-    const result: LockedMeasurement = { inches: pendingInches, segment };
-    onLockDimension(activeField.key, result);
-    setMeasurePoints([]);
+    setMeasurePoints((pts) => pts.filter((_, i) => i !== pairIndex * 2 && i !== pairIndex * 2 + 1));
+    setMarkers((current) => [...current.filter((m) => !roleEquals(m.role, role)), marker]);
     setSelectedIndex(null);
-    const nextIndex = dimensions.findIndex((d, i) => i > activeFieldIndex && !locked[d.key]);
-    if (nextIndex !== -1) setActiveFieldIndex(nextIndex);
+    const key = roleLookupKey(role);
+    if (key != null) {
+      const segment: PhotoSegment = { ptA: pair.ptA, ptB: pair.ptB, inches: pair.inches };
+      onLockDimension(key, { inches: pair.inches, segment });
+    }
+  }
+
+  // Changes which role an already-assigned marker holds -- still reversible,
+  // still re-fires onLockDimension so the caller's stored value stays current.
+  function reassignMarkerRole(markerId: string, role: CaptureRole) {
+    const marker = markers.find((m) => m.id === markerId);
+    if (!marker) return;
+    const updated: CaptureMarker = { ...marker, role };
+    setMarkers((current) => [...current.filter((m) => m.id !== markerId && !roleEquals(m.role, role)), updated]);
+    const key = roleLookupKey(role);
+    if (key != null) {
+      const segment: PhotoSegment = { ptA: marker.ptA, ptB: marker.ptB, inches: marker.rawInches };
+      onLockDimension(key, { inches: marker.rawInches, segment });
+    }
+  }
+
+  // Explicit, reversible undo of a role assignment: the marker is discarded
+  // and its two points return to the provisional/draggable pool so the user
+  // can re-tap or reassign, without losing the points or restarting.
+  function unassignMarker(markerId: string) {
+    const marker = markers.find((m) => m.id === markerId);
+    if (!marker) return;
+    setMarkers((current) => current.filter((m) => m.id !== markerId));
+    setMeasurePoints((pts) => [...pts, marker.ptA, marker.ptB]);
+    setSelectedIndex(null);
+  }
+
+  function toggleKeep(markerId: string) {
+    const marker = markers.find((m) => m.id === markerId);
+    if (!marker) return;
+    const nextKeep = !marker.keep;
+    setMarkers((current) => current.map((m) => (m.id === markerId ? { ...m, keep: nextKeep } : m)));
+    if (nextKeep && marker.role) {
+      const key = roleLookupKey(marker.role);
+      if (key != null) {
+        const segment: PhotoSegment = { ptA: marker.ptA, ptB: marker.ptB, inches: marker.rawInches };
+        onLockDimension(key, { inches: marker.rawInches, segment });
+      }
+    }
   }
 
   function nudgeSelected(dx: number, dy: number) {
@@ -593,54 +671,120 @@ export function PhotoMeasureSession({
       </div>
 
       {calibration && (
-        <div className="space-y-2 rounded-xl border bg-card p-4">
-          <p className="text-sm font-semibold">Measurements</p>
-          {dimensions.map((d, i) => {
-            const isActive = i === activeFieldIndex && tool === "measure";
-            const value = locked[d.key];
-            return (
-              <button
-                key={d.key}
-                type="button"
-                onClick={() => selectField(i)}
-                className={cn(
-                  "flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm",
-                  isActive ? "border-primary bg-primary/5" : "border-border",
-                )}
-              >
-                <span>
-                  <span className="font-medium">{d.label}</span>
-                  {d.hint && <span className="block text-xs text-muted-foreground">{d.hint}</span>}
-                </span>
-                <span className="flex items-center gap-1.5 font-mono text-sm font-semibold">
-                  {value ? formatFractionInches(value.inches, 16) + '"' : "—"}
-                  {value && <Check className="size-3.5 text-emerald-600" />}
-                </span>
-              </button>
-            );
-          })}
+        <div className="space-y-3 rounded-xl border bg-card p-4">
+          <div>
+            <p className="text-sm font-semibold">Measurements</p>
+            <p className="text-xs text-muted-foreground">
+              Tap pairs of points anywhere on the photo, then assign each one a role below — assigning is what
+              locks it in. Nothing is final until it has a role.
+            </p>
+          </div>
 
-          {tool === "measure" && activeField && (
-            <div className="space-y-2 border-t pt-3">
-              <p className="text-xs text-muted-foreground">
-                Tap two points on the photo for <strong>{activeField.label}</strong> — drag or nudge to adjust,
-                then lock it in.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <span className="flex-1 rounded-md border px-2 py-1.5 font-mono text-sm font-semibold">
-                  {pendingInches != null ? `${formatFractionInches(pendingInches, 16)}"` : "—"}
-                </span>
-                <Button size="sm" variant="outline" disabled={!measurePoints.length} onClick={undoPending}>
-                  <Undo2 />
-                  Undo
-                </Button>
-                <Button size="sm" disabled={pendingInches == null} onClick={lockActiveField}>
-                  <Check />
-                  Lock in: {activeField.label}
-                </Button>
-              </div>
+          {markers.length > 0 && (
+            <div className="space-y-1.5">
+              {markers.map((m) => (
+                <div
+                  key={m.id}
+                  data-testid={`marker-${m.id}`}
+                  data-role-label={roleLabel(m.role!, dimensions)}
+                  className={cn(
+                    "space-y-1.5 rounded-md border px-3 py-2 text-sm",
+                    m.keep ? "border-emerald-300 bg-emerald-50" : "border-border bg-muted/30",
+                  )}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">#{m.id.replace("m", "")}</span>
+                    <span className="font-medium">{roleLabel(m.role!, dimensions)}</span>
+                    <span className="font-mono font-semibold">{formatFractionInches(m.rawInches, 16)}&quot;</span>
+                    <span className="ml-auto flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          data-testid={`keep-${m.id}`}
+                          checked={m.keep}
+                          onChange={() => toggleKeep(m.id)}
+                        />
+                        Keep
+                      </label>
+                      <Button size="xs" variant="outline" onClick={() => unassignMarker(m.id)}>
+                        Unassign
+                      </Button>
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dimensions.map((d) => {
+                      const role = inferRoleForKey(d.key);
+                      return (
+                        <Button
+                          key={d.key}
+                          size="xs"
+                          variant={roleEquals(m.role, role) ? "default" : "outline"}
+                          onClick={() => reassignMarkerRole(m.id, role)}
+                        >
+                          {d.label}
+                        </Button>
+                      );
+                    })}
+                    <Button
+                      size="xs"
+                      variant={m.role?.kind === "reference" ? "default" : "outline"}
+                      onClick={() => reassignMarkerRole(m.id, { kind: "reference", label: nextReferenceLabel() })}
+                    >
+                      Reference
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+
+          {provisionalPairs.length > 0 && (
+            <div className="space-y-1.5 border-t pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Placed, not yet assigned</p>
+              {provisionalPairs.map((pair, i) => (
+                <div key={i} data-testid={`provisional-${i}`} className="space-y-1.5 rounded-md border px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">New #{i + 1}</span>
+                    <span className="font-mono font-semibold">
+                      {pair.inches != null ? `${formatFractionInches(pair.inches, 16)}"` : "—"}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dimensions.map((d) => (
+                      <Button
+                        key={d.key}
+                        size="xs"
+                        variant="outline"
+                        disabled={pair.inches == null}
+                        onClick={() => commitPendingPair(i, inferRoleForKey(d.key))}
+                      >
+                        {d.label}
+                      </Button>
+                    ))}
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={pair.inches == null}
+                      onClick={() => commitPendingPair(i, { kind: "reference", label: nextReferenceLabel() })}
+                    >
+                      Reference
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 border-t pt-3">
+            <Button size="sm" variant={tool === "measure" ? "default" : "outline"} onClick={() => switchTool("measure")}>
+              <Ruler className="size-3.5" />
+              Place a marker
+            </Button>
+            <Button size="sm" variant="outline" disabled={!measurePoints.length} onClick={undoPending}>
+              <Undo2 />
+              Undo last point
+            </Button>
+          </div>
         </div>
       )}
 
@@ -672,11 +816,19 @@ export function PhotoMeasureSession({
       )}
 
       {calibration && (
-        <Button size="lg" className="w-full" disabled={!allLocked} onClick={() => onComplete(locked)}>
+        <Button
+          size="lg"
+          className="w-full"
+          data-testid="complete-button"
+          disabled={!complete}
+          onClick={() => onComplete(locked)}
+        >
           <Ruler className="size-4" />
-          {allLocked
+          {complete
             ? "Use these measurements"
-            : `Still need ${dimensions.filter((d) => !locked[d.key]).length} of ${dimensions.length}`}
+            : missingLabels.length > 0
+              ? `Still need: ${missingLabels.join(", ")}`
+              : "Assign a role to your markers to continue"}
         </Button>
       )}
     </div>
