@@ -22,7 +22,14 @@ export const PAPER_ASPECT: Record<string, PaperAspect> = {
 };
 
 const ASPECT_TOLERANCE_RATIO = 0.12;
-const MIN_AREA_FRACTION = 0.08;
+// Field-photo evidence (5 real photos, logged via frontend/scripts/detect-debug.mjs):
+// a real, clean, convex 4-point sheet candidate was rejected here at 5.3%
+// (BoxMeasure3.jpg) and 6.7% (BoxMeasure5.jpg) of frame -- both real photos
+// where the frame also had to fit the whole cardboard blank, not just the
+// sheet. 0.08 was tuned against paper-only test shots and didn't leave room
+// for that. 0.03 sits with margin below both observed failures rather than
+// just barely clearing them.
+const MIN_AREA_FRACTION = 0.03;
 const MAX_AREA_FRACTION = 0.97;
 const WORK_MAX_DIM = 900;
 // Debug mode (?detectDebug=1) relaxes the area floor so near-miss candidates
@@ -30,8 +37,9 @@ const WORK_MAX_DIM = 900;
 // spurious micro-contours -- floor and cap those out so the overlay (and
 // the extra Mat work behind it) stays usable. `logAll` (diagnostic script
 // use only, not the live UI) bypasses both, since evidence-gathering needs
-// the full picture.
-const DEBUG_MIN_AREA_FRACTION = 0.02;
+// the full picture. Kept proportional to MIN_AREA_FRACTION so debug mode
+// still shows a meaningful window of near-misses below the real floor.
+const DEBUG_MIN_AREA_FRACTION = 0.0075;
 const DEBUG_MAX_CANDIDATES = 40;
 
 /** Every contour opencv considered, kept only when opts.collectDebug or
