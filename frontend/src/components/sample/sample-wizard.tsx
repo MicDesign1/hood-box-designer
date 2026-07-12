@@ -44,8 +44,8 @@ import {
   fetchDielineDxfFromPayload,
   fetchDielineSvgFromPayload,
 } from "@/lib/dieline";
-import { formatBlankSize, formatDimensionSummary, formatFractionInches, parseImperialInput } from "@/lib/imperial";
-import { applyPhotoLock, MEASUREMENT_FIELD_LABELS } from "@/lib/sample-capture";
+import { formatBlankSize, formatDimensionSummary, formatFractionInches } from "@/lib/imperial";
+import { applyPhotoLock, MEASUREMENT_FIELD_LABELS, resolveMeasurementInches } from "@/lib/sample-capture";
 import {
   confidenceLabel,
   extraMeasurementKind,
@@ -84,24 +84,27 @@ function displaySuggestedInput(text: string): string {
   return text.replace(/depth panel/gi, "height panel");
 }
 
-function parseMeasure(raw: string): number | null {
-  return parseImperialInput(raw);
-}
-
-function buildSolvePayload(
+/**
+ * Builds the solver payload. Every measurement is sourced via
+ * `resolveMeasurementInches`, never by re-parsing the display string
+ * directly: the solver needs full precision to disambiguate near-tie
+ * candidate styles, and the display string is deliberately rounded to 2
+ * decimals for on-screen/editable use (see sample-capture.ts). Exported for
+ * direct unit testing of that sourcing behavior.
+ */
+export function buildSolvePayload(
   state: SampleWizardState,
 ): Parameters<typeof fetchSolve>[0] | null {
   if (!state.flute || !state.style) return null;
 
   const joint: SampleJoint = state.style === "tube" ? "taped" : (state.joint ?? "glued");
-  const m = state.measurements;
 
-  const panel1 = parseMeasure(m.panel1);
-  const panelD = parseMeasure(m.panelD);
-  const panel2 = parseMeasure(m.panel2);
-  const blankW = parseMeasure(m.blankWidth);
-  const blankH = parseMeasure(m.blankHeight);
-  const flapH = parseMeasure(m.flapHeight);
+  const panel1 = resolveMeasurementInches(state, "panel1");
+  const panelD = resolveMeasurementInches(state, "panelD");
+  const panel2 = resolveMeasurementInches(state, "panel2");
+  const blankW = resolveMeasurementInches(state, "blankWidth");
+  const blankH = resolveMeasurementInches(state, "blankHeight");
+  const flapH = resolveMeasurementInches(state, "flapHeight");
 
   if (panel1 === null || panel2 === null) {
     return null;
@@ -117,9 +120,8 @@ function buildSolvePayload(
   };
 
   if (state.style === "tube") {
-    const tubeHeight = parseMeasure(m.blankHeight);
-    if (tubeHeight === null) return null;
-    payload.blank_h = tubeHeight;
+    if (blankH === null) return null;
+    payload.blank_h = blankH;
   } else {
     if (panelD === null) return null;
     payload.panel_d = panelD;
