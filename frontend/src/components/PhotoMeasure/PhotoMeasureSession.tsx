@@ -229,6 +229,13 @@ export function PhotoMeasureSession({
     [presentation, image, refId, calPoints, customLengthInches, markers],
   );
 
+  // Dormant since reference-marker creation was pulled from the UI (no
+  // "Reference" role button exists anymore -- see git history for that
+  // commit): `markers` can never contain a `kind: "reference"` entry, so
+  // `refs` below is always empty and this callback never fires. Left wired
+  // deliberately, not deleted -- re-adding the role button is all it takes
+  // to turn the whole feature (legend, data table, this callback) back on.
+  //
   // Only notifies on a non-empty list: a freshly-mounted session (e.g. the
   // user reopens the photo modal to fix an unrelated field) starts with
   // zero markers, and firing an empty array here would silently wipe
@@ -439,11 +446,6 @@ export function PhotoMeasureSession({
     setSelectedIndex(null);
   }
 
-  function nextReferenceLabel(): string {
-    const n = markers.filter((m) => m.role?.kind === "reference").length + 1;
-    return `Reference ${n}`;
-  }
-
   // Assigning a role IS the lock action -- promotes a provisional pair into
   // a permanent CaptureMarker and removes its points from the draggable
   // pool. External contract unchanged: still emits the exact same
@@ -507,17 +509,6 @@ export function PhotoMeasureSession({
         onLockDimension(key, { inches: marker.rawInches, segment });
       }
     }
-  }
-
-  // Reference markers are identified by a user-supplied label, not a fixed
-  // axis/panel choice -- this is that labeling step ("labeling instead of
-  // axis-picking" for reference markers, Phase 3 requirement B). Renaming
-  // doesn't touch rawInches/points, so it doesn't re-fire onLockDimension
-  // (reference roles never reach it -- see deriveLockedMeasurements).
-  function renameReference(markerId: string, label: string) {
-    setMarkers((current) =>
-      current.map((m) => (m.id === markerId && m.role?.kind === "reference" ? { ...m, role: { kind: "reference", label } } : m)),
-    );
   }
 
   function nudgeSelected(dx: number, dy: number) {
@@ -718,17 +709,7 @@ export function PhotoMeasureSession({
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-muted-foreground">#{m.id.replace("m", "")}</span>
-                    {markerRole.kind === "reference" ? (
-                      <Input
-                        data-testid={`reference-label-${m.id}`}
-                        value={markerRole.label}
-                        onChange={(e) => renameReference(m.id, e.target.value)}
-                        className="h-7 w-36 text-sm font-medium"
-                        aria-label="Reference label"
-                      />
-                    ) : (
-                      <span className="font-medium">{roleLabel(markerRole, dimensions)}</span>
-                    )}
+                    <span className="font-medium">{roleLabel(markerRole, dimensions)}</span>
                     <span className="font-mono font-semibold">{formatFractionInches(m.rawInches, 16)}&quot;</span>
                     <span className="ml-auto flex items-center gap-3">
                       <label className="flex items-center gap-1.5 text-xs">
@@ -759,13 +740,6 @@ export function PhotoMeasureSession({
                         </Button>
                       );
                     })}
-                    <Button
-                      size="xs"
-                      variant={markerRole.kind === "reference" ? "default" : "outline"}
-                      onClick={() => reassignMarkerRole(m.id, { kind: "reference", label: nextReferenceLabel() })}
-                    >
-                      Reference
-                    </Button>
                   </div>
                 </div>
                 );
@@ -796,14 +770,6 @@ export function PhotoMeasureSession({
                         {d.label}
                       </Button>
                     ))}
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={pair.inches == null}
-                      onClick={() => commitPendingPair(i, { kind: "reference", label: nextReferenceLabel() })}
-                    >
-                      Reference
-                    </Button>
                   </div>
                 </div>
               ))}
