@@ -261,38 +261,73 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
           />
         )}
         {showLabels &&
-          geometry.labels.map((mark, index) => {
-            const { main, sub } = labelLines(mark, unit);
-            const size = mark.small ? labelSize * 0.62 : labelSize;
-            const anchor = mark.kind === "reference" || mark.kind === "height" ? "start" : "middle";
-            return (
-              <g key={index}>
-                <text
-                  x={mark.x}
-                  y={mark.y}
-                  textAnchor={anchor}
-                  fontSize={size}
-                  fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                  fontWeight={600}
-                  fill={mark.faint ? "#9ca3af" : "#1f2937"}
-                >
-                  {main}
-                </text>
-                {sub && (
+          (() => {
+            // Preview-only positioning/orientation choices -- none of this
+            // touches mark.x/mark.y as computed by the backend (geometry.py),
+            // which the export (build_svg/build_dxf) reads directly. This
+            // block only decides how THIS component renders the same data.
+            const hasTab = geometry.labels.some((l) => l.kind === "tab");
+            const rightMargin = unit === "mm" ? 7.5 : 0.3;
+
+            return geometry.labels.map((mark, index) => {
+              const { main, sub } = labelLines(mark, unit);
+              // "small" marks (TAB/GLUE/flap) were previously 0.62x main
+              // size -- bumped closer to the dimension-number size, still
+              // visually subordinate but no longer squint-to-read.
+              const size = mark.small ? labelSize * 0.78 : labelSize;
+              const rotated = mark.kind === "tab" || mark.kind === "height";
+              const anchor = rotated ? "middle" : mark.kind === "reference" ? "start" : "middle";
+
+              // H renders vertical, opposite the glue tab (right margin)
+              // when a tab is present; otherwise it keeps its own
+              // backend-computed left-margin position, just rotated.
+              const x = mark.kind === "height" && hasTab ? totalW + rightMargin : mark.x;
+              // Blank-size callout was sitting close enough to the dieline
+              // to read as touching it -- push it down by a clearance that
+              // scales with the rendered label size, not a fixed inch
+              // offset, so it stays clear at any zoom level.
+              const y = mark.kind === "blank" ? mark.y + labelSize * 1.4 : mark.y;
+
+              // For rotated text the main label's own glyphs already run
+              // vertically for several character-heights, so offsetting the
+              // sub-line vertically (as unrotated marks do) lands it inside
+              // that span, not below it. Offset horizontally instead --
+              // after rotation that reads as a second, parallel vertical
+              // column beside the main label.
+              const subX = rotated ? x + size * 0.9 : x;
+              const subY = rotated ? y : y + size * 0.9;
+
+              return (
+                <g key={index}>
                   <text
-                    x={mark.x}
-                    y={mark.y + size * 0.9}
+                    x={x}
+                    y={y}
                     textAnchor={anchor}
-                    fontSize={size * 0.5}
+                    transform={rotated ? `rotate(-90 ${x} ${y})` : undefined}
+                    fontSize={size}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                    fill="#6b7280"
+                    fontWeight={600}
+                    fill={mark.faint ? "#9ca3af" : "#1f2937"}
                   >
-                    {sub}
+                    {main}
                   </text>
-                )}
-              </g>
-            );
-          })}
+                  {sub && (
+                    <text
+                      x={subX}
+                      y={subY}
+                      textAnchor={anchor}
+                      transform={rotated ? `rotate(-90 ${subX} ${subY})` : undefined}
+                      fontSize={size * 0.75}
+                      fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                      fill="#6b7280"
+                    >
+                      {sub}
+                    </text>
+                  )}
+                </g>
+              );
+            });
+          })()}
       </svg>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
