@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -33,7 +33,15 @@ import {
   type ReferenceId,
 } from "@/lib/photo-calibration";
 import { cn } from "@/lib/utils";
-import { isComplete, type CaptureMarker, type CaptureRole, type CaptureSession } from "@/types/capture";
+import {
+  isComplete,
+  referenceDimensions,
+  roleEquals,
+  roleLookupKey,
+  type CaptureMarker,
+  type CaptureRole,
+  type CaptureSession,
+} from "@/types/capture";
 import type { DimensionField, LockedMeasurement, PhotoMeasureSessionProps, PhotoSegment } from "./types";
 
 const NUDGE_STEP = 1;
@@ -56,31 +64,31 @@ function inferRoleForKey(key: string): CaptureRole {
   };
 }
 
-/** The old `Record<string, LockedMeasurement>` key a role corresponds to,
- * or null for reference roles (which have no such key -- reference markers
- * don't participate in `onLockDimension`/`onComplete`'s payload; Phase 3
- * adds the callback that surfaces them). */
-function roleLookupKey(role: CaptureRole): string | null {
-  if (role.kind === "dimension") return role.axis;
-  if (role.kind === "panel") return role.panelField;
-  return null;
-}
-
-/** Dimension/panel roles are exclusive: assigning one to a new marker steals
- * it from whichever marker held it before (matches the pre-unification
- * photo-mode.tsx's assign-button behavior). Reference roles are never
- * exclusive with each other -- a session can have any number of them. */
-function roleEquals(a: CaptureRole | null, b: CaptureRole): boolean {
-  if (!a || a.kind === "reference" || b.kind === "reference") return false;
-  if (a.kind === "dimension" && b.kind === "dimension") return a.axis === b.axis;
-  if (a.kind === "panel" && b.kind === "panel") return a.panelField === b.panelField;
-  return false;
-}
-
 function roleLabel(role: CaptureRole, dims: DimensionField[]): string {
   if (role.kind === "reference") return role.label;
   const key = roleLookupKey(role);
   return dims.find((d) => d.key === key)?.label ?? key ?? "—";
+}
+
+/**
+ * Structural leakage guard (Phase 3 gate): the ONLY function that turns
+ * markers into the `Record<string, LockedMeasurement>` payload every
+ * downstream consumer reads (onComplete, onLockDimension, and from there
+ * BoxSpecPayload/SolveRequest). `roleLookupKey` returns null unconditionally
+ * for `kind: "reference"` -- it never reads `.label` -- so no reference
+ * marker, regardless of what a user types as its label, can ever produce a
+ * key here. Exported so this guarantee is unit-testable directly, without
+ * rendering the component.
+ */
+export function deriveLockedMeasurements(markers: CaptureMarker[]): Record<string, LockedMeasurement> {
+  const map: Record<string, LockedMeasurement> = {};
+  for (const m of markers) {
+    if (!m.role || !m.keep) continue;
+    const key = roleLookupKey(m.role);
+    if (key == null) continue; // reference roles don't participate in the old key->value map
+    map[key] = { inches: m.rawInches, segment: { ptA: m.ptA, ptB: m.ptB, inches: m.rawInches } };
+  }
+  return map;
 }
 
 /** Which of the method's required roles aren't kept yet -- drives the
@@ -146,6 +154,7 @@ export function PhotoMeasureSession({
   onCalibrationChange,
   onComplete,
   onCancel,
+  onReferenceDimensionsChange,
 }: PhotoMeasureSessionProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -185,29 +194,19 @@ export function PhotoMeasureSession({
   const [debugCandidates, setDebugCandidates] = useState<PaperCandidate[]>([]);
   const detectionGenerationRef = useRef(0);
 
-  const locked = useMemo(() => {
-    const map: Record<string, LockedMeasurement> = {};
-    for (const m of markers) {
-      if (!m.role || !m.keep) continue;
-      const key = roleLookupKey(m.role);
-      if (key == null) continue; // reference roles don't participate in the old key->value map
-      map[key] = { inches: m.rawInches, segment: { ptA: m.ptA, ptB: m.ptB, inches: m.rawInches } };
-    }
-    return map;
-  }, [markers]);
+  const locked = useMemo(() => deriveLockedMeasurements(markers), [markers]);
 
   const customLengthInches = parseImperialInput(customLengthInput);
   const calibration: Calibration | null = image ? computeCalibration(refId, calPoints, customLengthInches) : null;
   const maxCalPoints = requiredCalPoints(refId);
   const measureFn = calibration ? (a: Point, b: Point) => measureInches(calibration, a, b) : null;
 
-  // Drives the method-aware completion rule below (`isComplete`). Not yet
-  // exported to any prop -- no caller needs the full record out of this
-  // component until Phase 3's reference-dimension wiring. `method` is
-  // inferred from `presentation` for now: today embedded is always Design
-  // (direct-entry) and overlay is always Sample (panel-derived), 1:1, so
-  // this is exact, not a guess -- but it's a stand-in a future phase should
-  // replace with an explicit prop once a caller actually needs to declare it.
+  // Drives the method-aware completion rule below (`isComplete`) and the
+  // reference-dimension callback below it. `method` is inferred from
+  // `presentation` for now: today embedded is always Design (direct-entry)
+  // and overlay is always Sample (panel-derived), 1:1, so this is exact,
+  // not a guess -- but it's a stand-in a future phase should replace with
+  // an explicit prop once a caller actually needs to declare it.
   const captureSession: CaptureSession = useMemo(
     () => ({
       id: sessionIdRef.current,
@@ -229,6 +228,18 @@ export function PhotoMeasureSession({
     }),
     [presentation, image, refId, calPoints, customLengthInches, markers],
   );
+
+  // Only notifies on a non-empty list: a freshly-mounted session (e.g. the
+  // user reopens the photo modal to fix an unrelated field) starts with
+  // zero markers, and firing an empty array here would silently wipe
+  // whatever reference dimensions the caller already stored from an earlier
+  // session. The tradeoff -- there's no way to *intentionally* clear a
+  // caller's stored references from this component -- is the safer failure
+  // mode for a first cut; noted as a known limitation, not solved here.
+  useEffect(() => {
+    const refs = referenceDimensions(captureSession);
+    if (refs.length > 0) onReferenceDimensionsChange?.(refs);
+  }, [captureSession, onReferenceDimensionsChange]);
 
   // Free-placement pairs not yet assigned a role -- provisional, still
   // draggable/nudgeable via the existing measure-tool point pool.
@@ -498,6 +509,17 @@ export function PhotoMeasureSession({
     }
   }
 
+  // Reference markers are identified by a user-supplied label, not a fixed
+  // axis/panel choice -- this is that labeling step ("labeling instead of
+  // axis-picking" for reference markers, Phase 3 requirement B). Renaming
+  // doesn't touch rawInches/points, so it doesn't re-fire onLockDimension
+  // (reference roles never reach it -- see deriveLockedMeasurements).
+  function renameReference(markerId: string, label: string) {
+    setMarkers((current) =>
+      current.map((m) => (m.id === markerId && m.role?.kind === "reference" ? { ...m, role: { kind: "reference", label } } : m)),
+    );
+  }
+
   function nudgeSelected(dx: number, dy: number) {
     if (selectedIndex === null) return;
     if (tool === "calibrate") {
@@ -682,11 +704,13 @@ export function PhotoMeasureSession({
 
           {markers.length > 0 && (
             <div className="space-y-1.5">
-              {markers.map((m) => (
+              {markers.map((m) => {
+                const markerRole = m.role!; // only assigned markers ever land in `markers`
+                return (
                 <div
                   key={m.id}
                   data-testid={`marker-${m.id}`}
-                  data-role-label={roleLabel(m.role!, dimensions)}
+                  data-role-label={roleLabel(markerRole, dimensions)}
                   className={cn(
                     "space-y-1.5 rounded-md border px-3 py-2 text-sm",
                     m.keep ? "border-emerald-300 bg-emerald-50" : "border-border bg-muted/30",
@@ -694,7 +718,17 @@ export function PhotoMeasureSession({
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-muted-foreground">#{m.id.replace("m", "")}</span>
-                    <span className="font-medium">{roleLabel(m.role!, dimensions)}</span>
+                    {markerRole.kind === "reference" ? (
+                      <Input
+                        data-testid={`reference-label-${m.id}`}
+                        value={markerRole.label}
+                        onChange={(e) => renameReference(m.id, e.target.value)}
+                        className="h-7 w-36 text-sm font-medium"
+                        aria-label="Reference label"
+                      />
+                    ) : (
+                      <span className="font-medium">{roleLabel(markerRole, dimensions)}</span>
+                    )}
                     <span className="font-mono font-semibold">{formatFractionInches(m.rawInches, 16)}&quot;</span>
                     <span className="ml-auto flex items-center gap-3">
                       <label className="flex items-center gap-1.5 text-xs">
@@ -727,14 +761,15 @@ export function PhotoMeasureSession({
                     })}
                     <Button
                       size="xs"
-                      variant={m.role?.kind === "reference" ? "default" : "outline"}
+                      variant={markerRole.kind === "reference" ? "default" : "outline"}
                       onClick={() => reassignMarkerRole(m.id, { kind: "reference", label: nextReferenceLabel() })}
                     >
                       Reference
                     </Button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

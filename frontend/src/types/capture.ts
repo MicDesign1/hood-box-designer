@@ -42,6 +42,31 @@ export type CaptureRole =
     }
   | { kind: "reference"; label: string };
 
+/** The old `Record<string, LockedMeasurement>` key a role corresponds to,
+ * or null for reference roles. This is the actual structural guard against
+ * leakage, not just documentation: it returns null unconditionally for
+ * `kind: "reference"` -- it never reads `.label`, so nothing a user types
+ * into a reference marker's label (including a string that collides with a
+ * real axis/panel key, e.g. "length") can ever produce a key. Code that
+ * builds solver/BoxSpec payloads has no path to a reference marker's data
+ * without a deliberate branch on `role.kind` that doesn't exist anywhere
+ * upstream of `referenceDimensions()` below. */
+export function roleLookupKey(role: CaptureRole): string | null {
+  if (role.kind === "dimension") return role.axis;
+  if (role.kind === "panel") return role.panelField;
+  return null;
+}
+
+/** Dimension/panel roles are exclusive: assigning one to a new marker steals
+ * it from whichever marker held it before. Reference roles are never
+ * exclusive with each other -- a session can have any number of them. */
+export function roleEquals(a: CaptureRole | null, b: CaptureRole): boolean {
+  if (!a || a.kind === "reference" || b.kind === "reference") return false;
+  if (a.kind === "dimension" && b.kind === "dimension") return a.axis === b.axis;
+  if (a.kind === "panel" && b.kind === "panel") return a.panelField === b.panelField;
+  return false;
+}
+
 export interface CaptureMarker {
   /** "m1", "m2", ... assigned at placement, stable for the life of the session. */
   readonly id: string;
@@ -92,10 +117,13 @@ export function keptMarkers(session: CaptureSession): CaptureMarker[] {
   return session.markers.filter((m) => m.role !== null && m.keep);
 }
 
+export interface ReferenceDimension {
+  label: string;
+  rawInches: number;
+}
+
 /** Reference-only markers among the kept set -- annotations, never math. */
-export function referenceDimensions(
-  session: CaptureSession,
-): { label: string; rawInches: number }[] {
+export function referenceDimensions(session: CaptureSession): ReferenceDimension[] {
   return keptMarkers(session)
     .filter(
       (m): m is CaptureMarker & { role: { kind: "reference"; label: string } } =>

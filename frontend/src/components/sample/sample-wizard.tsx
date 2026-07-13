@@ -46,6 +46,7 @@ import {
 } from "@/lib/dieline";
 import { formatBlankSize, formatDimensionSummary, formatFractionInches } from "@/lib/imperial";
 import { applyPhotoLock, MEASUREMENT_FIELD_LABELS, resolveMeasurementInches } from "@/lib/sample-capture";
+import type { ReferenceDimension } from "@/types/capture";
 import {
   confidenceLabel,
   extraMeasurementKind,
@@ -211,6 +212,10 @@ export function SampleWizard() {
   >({});
   const [photoSessionOpen, setPhotoSessionOpen] = useState(false);
   const [photoSessionDimensions, setPhotoSessionDimensions] = useState<DimensionField[]>([]);
+  // Phase 3, minimal: mirrors whatever the photo session last reported as
+  // its kept reference markers. Phase 4's real data table (proposal §5)
+  // replaces this list with the full raw-markers/L-W-H/Outside table.
+  const [referenceDimensions, setReferenceDimensions] = useState<ReferenceDimension[]>([]);
 
   const reset = useCallback(() => {
     setState(INITIAL_SAMPLE_STATE);
@@ -575,6 +580,18 @@ export function SampleWizard() {
                 <Camera className="size-4" />
                 {photoCalibration ? "Open photo / recalibrate" : "Take or choose photo"}
               </Button>
+              {referenceDimensions.length > 0 && (
+                <div data-testid="reference-dimensions-list" className="mt-3 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  <p className="font-medium">Reference dimensions</p>
+                  <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                    {referenceDimensions.map((ref, i) => (
+                      <li key={i}>
+                        {ref.label}: <span className="font-mono">{formatFractionInches(ref.rawInches)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {state.style !== "tube" ? (
@@ -909,6 +926,7 @@ export function SampleWizard() {
           onCalibrationChange={(cal: PhotoCalibrationCapture) => setPhotoCalibration(cal)}
           onComplete={() => setPhotoSessionOpen(false)}
           onCancel={() => setPhotoSessionOpen(false)}
+          onReferenceDimensionsChange={setReferenceDimensions}
         />
       )}
     </div>

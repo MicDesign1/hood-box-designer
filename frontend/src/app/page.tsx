@@ -9,6 +9,7 @@ import { DesignMode } from "@/components/design-mode";
 import { PhotoMode } from "@/components/photo-mode";
 import { cn } from "@/lib/utils";
 import { DEFAULT_BOX_SPEC, type BoxSpec } from "@/types/box";
+import type { ReferenceDimension } from "@/types/capture";
 
 type Mode = "design" | "photo";
 
@@ -16,6 +17,10 @@ export default function HomePage() {
   const [mode, setMode] = useState<Mode>("design");
   const [spec, setSpec] = useState<BoxSpec>(DEFAULT_BOX_SPEC);
   const [specRevision, setSpecRevision] = useState(0);
+  // Phase 3, minimal: mirrors whatever the photo session last reported as
+  // its kept reference markers. Phase 4's real data table (proposal §5)
+  // replaces this list with the full raw-markers/L-W-H/Outside table.
+  const [referenceDimensions, setReferenceDimensions] = useState<ReferenceDimension[]>([]);
 
   function applyPhotoMeasurements(dims: { length: number; width: number; height: number }) {
     setSpec((current) => ({ ...current, ...dims }));
@@ -70,9 +75,26 @@ export default function HomePage() {
       </header>
 
       {mode === "design" ? (
-        <DesignMode spec={spec} setSpec={setSpec} specRevision={specRevision} />
+        <>
+          {referenceDimensions.length > 0 && (
+            <div
+              data-testid="reference-dimensions-list"
+              className="mx-auto max-w-7xl px-4 pt-6 text-sm sm:px-6 lg:px-8"
+            >
+              <p className="font-semibold">Reference dimensions</p>
+              <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                {referenceDimensions.map((ref, i) => (
+                  <li key={i}>
+                    {ref.label}: <span className="font-mono">{ref.rawInches.toFixed(3)}&quot;</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <DesignMode spec={spec} setSpec={setSpec} specRevision={specRevision} />
+        </>
       ) : (
-        <PhotoMode onApplyMeasurements={applyPhotoMeasurements} />
+        <PhotoMode onApplyMeasurements={applyPhotoMeasurements} onReferenceDimensions={setReferenceDimensions} />
       )}
     </div>
   );

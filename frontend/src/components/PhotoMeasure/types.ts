@@ -1,4 +1,5 @@
 import type { Point, ReferenceId } from "@/lib/photo-calibration";
+import type { ReferenceDimension } from "@/types/capture";
 
 /** One dimension this measurement session should collect. `key` is caller-defined
  * (e.g. "length" | "width" | "height" for Design Mode, or "panelD" | "panel1" |
@@ -50,4 +51,10 @@ export interface PhotoMeasureSessionProps {
    * confirms. */
   onComplete: (locked: Record<string, LockedMeasurement>) => void;
   onCancel: () => void;
+  /** Fires with this session's current kept reference-role markers whenever
+   * they change (create, relabel, reassign away, keep-toggle). Optional --
+   * callers that don't collect reference dimensions can omit it. Only fires
+   * with a non-empty array in practice (see PhotoMeasureSession) so a fresh
+   * session mounting empty never wipes a caller's already-stored list. */
+  onReferenceDimensionsChange?: (refs: ReferenceDimension[]) => void;
 }

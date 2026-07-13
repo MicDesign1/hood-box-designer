@@ -2,9 +2,11 @@
 
 import { PhotoMeasureSession } from "@/components/PhotoMeasure/PhotoMeasureSession";
 import type { DimensionField, LockedMeasurement } from "@/components/PhotoMeasure/types";
+import type { ReferenceDimension } from "@/types/capture";
 
 export interface PhotoModeProps {
   onApplyMeasurements: (dims: { length: number; width: number; height: number }) => void;
+  onReferenceDimensions?: (refs: ReferenceDimension[]) => void;
 }
 
 const DIMENSIONS: DimensionField[] = [
@@ -31,7 +33,7 @@ export function dimsFromLockedMeasurements(
   return { length: length.inches, width: width.inches, height: height.inches };
 }
 
-export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
+export function PhotoMode({ onApplyMeasurements, onReferenceDimensions }: PhotoModeProps) {
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <PhotoMeasureSession
@@ -44,6 +46,7 @@ export function PhotoMode({ onApplyMeasurements }: PhotoModeProps) {
           const dims = dimsFromLockedMeasurements(locked);
           if (dims) onApplyMeasurements(dims);
         }}
+        onReferenceDimensionsChange={onReferenceDimensions}
       />
     </main>
   );
