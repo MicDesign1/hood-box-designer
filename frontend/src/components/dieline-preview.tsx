@@ -95,8 +95,16 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
     // the box's own [0,totalW]x[0,totalH] bounds -- fold their positions in
     // so the default view doesn't crop them off, requiring a manual pan.
     const labels = geometry?.labels ?? [];
-    const minX = Math.min(0, ...labels.map((l) => l.x));
-    const maxX = Math.max(totalW, ...labels.map((l) => l.x));
+    // The H callout's actual rendered x is a preview-only override (see the
+    // render loop below) placed at a clearance proportional to labelSize,
+    // which itself depends on the fit result -- a circular dependency this
+    // sidesteps by just reserving a fixed fraction of totalW on both sides
+    // rather than trying to compute the override's exact final position
+    // here. Reserved on both sides regardless of which one H actually
+    // lands on, since that's cheap and avoids duplicating the hasTab check.
+    const heightReserve = totalW * 0.1;
+    const minX = Math.min(0, -heightReserve, ...labels.map((l) => l.x));
+    const maxX = Math.max(totalW, totalW + heightReserve, ...labels.map((l) => l.x));
     const minY = Math.min(0, ...labels.map((l) => l.y));
     const maxY = Math.max(totalH, ...labels.map((l) => l.y));
     const w = maxX - minX;
@@ -267,7 +275,13 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
             // which the export (build_svg/build_dxf) reads directly. This
             // block only decides how THIS component renders the same data.
             const hasTab = geometry.labels.some((l) => l.kind === "tab");
-            const rightMargin = unit === "mm" ? 7.5 : 0.3;
+            // H's clearance from the dieline outline scales with the
+            // current rendered label size, not a fixed inch offset --
+            // geometry.py's own small margin (used for the export, where
+            // font size is fixed and already verified clear via getBBox)
+            // isn't guaranteed to clear the outline here, since labelSize
+            // grows and shrinks with zoom while that backend offset can't.
+            const heightMargin = labelSize * 2.2;
 
             return geometry.labels.map((mark, index) => {
               const { main, sub } = labelLines(mark, unit);
@@ -279,9 +293,11 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
               const anchor = rotated ? "middle" : mark.kind === "reference" ? "start" : "middle";
 
               // H renders vertical, opposite the glue tab (right margin)
-              // when a tab is present; otherwise it keeps its own
-              // backend-computed left-margin position, just rotated.
-              const x = mark.kind === "height" && hasTab ? totalW + rightMargin : mark.x;
+              // when a tab is present, left margin otherwise -- always at
+              // heightMargin clearance from the outline, ignoring
+              // geometry.py's own (fixed, export-only) x for this mark.
+              const x =
+                mark.kind === "height" ? (hasTab ? totalW + heightMargin : -heightMargin) : mark.x;
               // Blank-size callout was sitting close enough to the dieline
               // to read as touching it -- push it down by a clearance that
               // scales with the rendered label size, not a fixed inch
