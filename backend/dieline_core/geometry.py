@@ -17,7 +17,7 @@ from __future__ import annotations
 import io
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import ezdxf
@@ -818,12 +818,55 @@ def _label_lines(mark: LabelMark, unit: str) -> tuple[str, str | None]:
     return "", None
 
 
+def _apply_export_label_layout(result: DielineResult) -> DielineResult:
+    """Export-only label repositioning: H moves to the margin opposite the
+    glue tab (when one exists), and the blank-size callout gets extra
+    clearance below the drawing. Operates on `result`'s own coordinate
+    space (unshifted, matching build_dieline()'s own output) so the same
+    override works unmodified for build_dxf (uses it directly) and for
+    build_svg (which uniformly shifts everything afterwards via
+    _shift_geometry, including these overridden positions).
+
+    Purely a drawing decision, not a geometry one: doesn't touch
+    cuts/creases/derived, and is never exposed outside build_svg/build_dxf
+    -- the API's own `geometry` response (which the live preview reads)
+    keeps build_dieline()'s original per-spec label positions unmodified.
+    This is a port of the frontend live preview's own, independently
+    implemented layout choice for these same two kinds (dieline-preview.tsx)
+    to the export renderers -- not a shared-code path between the two.
+    """
+    label_size = float(_unit_constants(result.unit)["labelSize"])
+    has_tab = any(m.kind == "tab" for m in result.labels)
+    new_labels: list[LabelMark] = []
+    for mark in result.labels:
+        if mark.kind == "height":
+            clearance = label_size * 2.2
+            x = result.total_w + clearance if has_tab else -clearance
+            new_labels.append(replace(mark, x=x))
+        elif mark.kind == "blank":
+            new_labels.append(replace(mark, y=result.total_h + label_size * 1.8))
+        else:
+            new_labels.append(mark)
+    return DielineResult(
+        ok=result.ok,
+        warnings=result.warnings,
+        cuts=result.cuts,
+        creases=result.creases,
+        labels=new_labels,
+        total_w=result.total_w,
+        total_h=result.total_h,
+        unit=result.unit,
+        derived=result.derived,
+    )
+
+
 def build_svg(result: DielineResult) -> str:
     """Layered SVG (cuts + creases + dimension callouts) with physical inch
     sizing and margin padding."""
-    padded = _shift_geometry(result, SVG_PAD_LEFT, SVG_PAD)
+    padded = _shift_geometry(_apply_export_label_layout(result), SVG_PAD_LEFT, SVG_PAD)
+    label_max_x = max((label.x for label in padded.labels), default=padded.total_w)
     label_max_y = max((label.y for label in padded.labels), default=padded.total_h)
-    view_w = padded.total_w + SVG_PAD
+    view_w = max(padded.total_w + SVG_PAD, label_max_x + SVG_PAD)
     view_h = max(padded.total_h + SVG_PAD, label_max_y + SVG_PAD)
     width_pt = view_w * 72
     height_pt = view_h * 72
@@ -874,31 +917,42 @@ def build_svg(result: DielineResult) -> str:
         if not main:
             continue
         size = label_size * 0.62 if mark.small else label_size
-        # "height"/"reference" grow rightward from their anchor point instead
-        # of centering, so they can't overflow left past x=0 into the SVG's
-        # narrow left margin.
-        anchor = "start" if mark.kind in ("reference", "height") else "middle"
+        # TAB and H render as vertical text -- matches the frontend live
+        # preview's own choice for these same two kinds.
+        rotated = mark.kind in ("tab", "height")
+        # "reference" grows rightward from its anchor point instead of
+        # centering, so it can't overflow left past x=0 into the SVG's
+        # narrow left margin. Rotated marks always center on their own
+        # vertical run (matches the preview).
+        anchor = "middle" if rotated else ("start" if mark.kind == "reference" else "middle")
         css_class = "dieline-dim dieline-dim-faint" if mark.faint else "dieline-dim"
-        dim_group.add(
-            drawing.text(
-                main,
-                insert=(mark.x, mark.y),
-                text_anchor=anchor,
-                font_size=size,
-                class_=css_class,
-            )
-        )
+        main_attrs: dict[str, Any] = {
+            "insert": (mark.x, mark.y),
+            "text_anchor": anchor,
+            "font_size": size,
+            "class_": css_class,
+        }
+        if rotated:
+            main_attrs["transform"] = f"rotate(-90 {mark.x} {mark.y})"
+        dim_group.add(drawing.text(main, **main_attrs))
         if sub:
-            dim_group.add(
-                drawing.text(
-                    sub,
-                    insert=(mark.x, mark.y + size * 0.9),
-                    text_anchor=anchor,
-                    font_size=size * 0.5,
-                    class_="dieline-dim",
-                    fill="#6b7280",
-                )
-            )
+            # For rotated marks the main label's own glyphs already run
+            # vertically for several character-heights, so offsetting the
+            # sub-line vertically (as unrotated marks do) lands it inside
+            # that span, not below it. Offset horizontally instead -- after
+            # rotation that reads as a second, parallel vertical column
+            # beside the main label. Matches the preview's identical fix.
+            sub_x, sub_y = (mark.x + size * 0.9, mark.y) if rotated else (mark.x, mark.y + size * 0.9)
+            sub_attrs: dict[str, Any] = {
+                "insert": (sub_x, sub_y),
+                "text_anchor": anchor,
+                "font_size": size * 0.5,
+                "class_": "dieline-dim",
+                "fill": "#6b7280",
+            }
+            if rotated:
+                sub_attrs["transform"] = f"rotate(-90 {sub_x} {sub_y})"
+            dim_group.add(drawing.text(sub, **sub_attrs))
     drawing.add(dim_group)
 
     return drawing.tostring()
@@ -913,6 +967,8 @@ def _configure_dxf_units(doc: DxfDrawing, unit: str) -> None:
 def build_dxf(result: DielineResult) -> bytes:
     """Port of reference buildDXF — simple LINE entities, no display padding."""
     from ezdxf.enums import TextEntityAlignment
+
+    result = _apply_export_label_layout(result)
 
     doc: DxfDrawing = ezdxf.new("R2010")
     _configure_dxf_units(doc, result.unit)
@@ -960,19 +1016,38 @@ def build_dxf(result: DielineResult) -> bytes:
         if not main:
             continue
         size = label_size * 0.62 if mark.small else label_size
-        align = TextEntityAlignment.LEFT if mark.kind in ("reference", "height") else TextEntityAlignment.MIDDLE_CENTER
-        msp.add_text(main, dxfattribs={"layer": "DIMENSION", "height": size}).set_placement(
+        # TAB and H render as vertical text -- matches the frontend live
+        # preview's own choice for these same two kinds. DXF TEXT's native
+        # `rotation` attribute survives set_placement() untouched (verified
+        # directly against ezdxf), so it's set once at construction.
+        rotated = mark.kind in ("tab", "height")
+        align = TextEntityAlignment.LEFT if mark.kind == "reference" else TextEntityAlignment.MIDDLE_CENTER
+        main_dxfattribs = {"layer": "DIMENSION", "height": size}
+        if rotated:
+            main_dxfattribs["rotation"] = 90
+        msp.add_text(main, dxfattribs=main_dxfattribs).set_placement(
             (_round_coord(mark.x), _round_coord(mark.y)), align=align
         )
         if sub:
-            # Matches build_svg's sub-line offset exactly (+size*0.9, not
-            # flipped) -- this codebase already feeds the same Y-down data
-            # straight into DXF as SVG (no axis flip anywhere else in this
-            # file), so a flip here would misplace text relative to the
-            # cut/crease geometry it's meant to sit beside.
-            sub_align = align
-            msp.add_text(sub, dxfattribs={"layer": "DIMENSION", "height": size * 0.5}).set_placement(
-                (_round_coord(mark.x), _round_coord(mark.y + size * 0.9)), align=sub_align
+            # For rotated marks the main label's own glyphs already run
+            # vertically for several character-heights, so offsetting the
+            # sub-line vertically (as unrotated marks do) lands it inside
+            # that span, not below it. Offset horizontally instead -- after
+            # rotation that reads as a second, parallel vertical column
+            # beside the main label. Matches build_svg's identical fix.
+            #
+            # For unrotated marks: matches build_svg's sub-line offset
+            # exactly (+size*0.9, not flipped) -- this codebase already
+            # feeds the same Y-down data straight into DXF as SVG (no axis
+            # flip anywhere else in this file), so a flip here would
+            # misplace text relative to the cut/crease geometry it's meant
+            # to sit beside.
+            sub_x, sub_y = (mark.x + size * 0.9, mark.y) if rotated else (mark.x, mark.y + size * 0.9)
+            sub_dxfattribs = {"layer": "DIMENSION", "height": size * 0.5}
+            if rotated:
+                sub_dxfattribs["rotation"] = 90
+            msp.add_text(sub, dxfattribs=sub_dxfattribs).set_placement(
+                (_round_coord(sub_x), _round_coord(sub_y)), align=align
             )
 
     buffer = io.StringIO()
