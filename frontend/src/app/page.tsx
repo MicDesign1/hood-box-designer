@@ -45,7 +45,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2 print-hide">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Link
               href="/sample"
               className={cn(buttonVariants({ size: "sm", variant: "outline" }), "gap-1.5")}

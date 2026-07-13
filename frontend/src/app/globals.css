@@ -128,23 +128,3 @@
     @apply font-sans;
   }
 }
-
-/*
- * Phase 4 PDF path: window.print() on the existing page, not a separate
- * generator -- .print-hide marks interactive chrome (nav, mode toggles,
- * upload/download buttons, pan/zoom controls) that's meaningless on paper.
- * Everything else -- Box Parameters, Derived Scores, MeasurementSummary,
- * the dieline preview itself -- prints as-is, which is the whole point:
- * screen and PDF can't drift because they're the same DOM.
- */
-@media print {
-  .print-hide {
-    display: none !important;
-  }
-  body {
-    background: white;
-  }
-  .print-full-width {
-    max-width: 100% !important;
-  }
-}

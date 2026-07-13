@@ -10,7 +10,6 @@ import {
   Download,
   Loader2,
   Package,
-  Printer,
   RotateCcw,
   Ruler,
 } from "lucide-react";
@@ -409,7 +408,7 @@ export function SampleWizard() {
         <div className={`mx-auto flex items-center gap-3 px-4 py-4 ${mainWidthClass}`}>
           <Link
             href="/"
-            className="print-hide flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground"
             aria-label="Back to home"
           >
             <ArrowLeft className="size-4" />
@@ -418,7 +417,7 @@ export function SampleWizard() {
             <h1 className="truncate text-lg font-semibold">Price a Sample</h1>
             <p className="text-sm text-muted-foreground">Measure a flat blank, get the box size</p>
           </div>
-          <Package className="size-5 shrink-0 text-muted-foreground print-hide" />
+          <Package className="size-5 shrink-0 text-muted-foreground" />
         </div>
       </header>
 
@@ -821,7 +820,7 @@ export function SampleWizard() {
                           "fraction",
                         )}
                       </p>
-                      <div className="print-hide flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                         <Button
                           variant="outline"
                           disabled={exportingDxf}
@@ -862,15 +861,11 @@ export function SampleWizard() {
                           <Download className="size-4" />
                           Download SVG
                         </Button>
-                        <Button variant="outline" onClick={() => window.print()}>
-                          <Printer className="size-4" />
-                          Print / Save as PDF
-                        </Button>
                       </div>
                     </div>
                     <Button
                       variant="secondary"
-                      className="print-hide w-full sm:w-auto"
+                      className="w-full sm:w-auto"
                       onClick={async () => {
                         const text = copySpecText(
                           state.solveResult!,
@@ -912,7 +907,7 @@ export function SampleWizard() {
               </Card>
             )}
 
-            <Button variant="ghost" className="print-hide w-full" onClick={reset}>
+            <Button variant="ghost" className="w-full" onClick={reset}>
               <RotateCcw className="size-4" />
               Start over
             </Button>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Loader2, Printer } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -412,7 +412,7 @@ export function DesignMode({ spec, setSpec, specRevision, referenceDimensions = 
                   dimensionFormat,
                 )}
               </p>
-              <div className="print-hide flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <Button
                   onClick={() => downloadSvg(svgMarkup, spec)}
                   className="w-full sm:w-auto"
@@ -429,15 +429,6 @@ export function DesignMode({ spec, setSpec, specRevision, referenceDimensions = 
                 >
                   {isExportingDxf ? <Loader2 className="size-4 animate-spin" /> : <Download />}
                   Download DXF
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => window.print()}
-                  className="w-full sm:w-auto"
-                  disabled={!styleIsAvailable || isLoading}
-                >
-                  <Printer />
-                  Print / Save as PDF
                 </Button>
               </div>
             </div>
