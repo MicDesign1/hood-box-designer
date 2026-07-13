@@ -25,6 +25,19 @@ const GRID_MINOR: Record<"in" | "mm", number> = { in: 0.25, mm: 10 };
 const GRID_MAJOR: Record<"in" | "mm", number> = { in: 1, mm: 100 };
 const FIT_MARGIN_RATIO = 0.05;
 
+// Phone legibility: below this rendered SVG width, labels use a bigger base
+// size (smaller divisor) than desktop. Matches Tailwind's `sm` breakpoint,
+// already the convention used everywhere else in this app.
+const PHONE_BREAKPOINT_PX = 640;
+const DESKTOP_LABEL_DIVISOR = 46;
+const PHONE_LABEL_DIVISOR = 30;
+// Absolute screen-px legibility floors -- without these, the zoom-relative
+// divisor above can still shrink labels below readable at high zoom-out
+// (measured ~7px main / ~5px sub at an iPhone-width viewport before this
+// fix), regardless of the bigger phone-only base.
+const MIN_MAIN_LABEL_SCREEN_PX = 12;
+const MIN_SUB_LABEL_SCREEN_PX = 10;
+
 function segsToPath(segments: LineSegment[]): string {
   return segments.map(([x1, y1, x2, y2]) => `M ${x1} ${y1} L ${x2} ${y2}`).join(" ");
 }
@@ -85,6 +98,22 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
   const [isDragging, setIsDragging] = useState(false);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchDist = useRef<number | null>(null);
+  // Actual rendered SVG width in CSS px -- needed to convert the screen-px
+  // legibility floors into the current viewBox's units, and to tell phone
+  // from desktop by real layout size rather than a media query (this
+  // component doesn't know its own container width any other way).
+  const [renderWidthPx, setRenderWidthPx] = useState(0);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setRenderWidthPx(width);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const totalW = geometry?.total_w ?? 0;
   const totalH = geometry?.total_h ?? 0;
@@ -217,7 +246,13 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
 
   const unit = geometry.unit;
   const strokeW = vb.w / 700;
-  const labelSize = vb.w / 46;
+  const isPhone = renderWidthPx > 0 && renderWidthPx < PHONE_BREAKPOINT_PX;
+  const baseLabelSize = vb.w / (isPhone ? PHONE_LABEL_DIVISOR : DESKTOP_LABEL_DIVISOR);
+  // Converts a screen-px legibility floor into the current viewBox's units.
+  // 0 (not yet measured by the ResizeObserver, i.e. the very first render
+  // before layout settles) means "no floor yet" rather than Infinity.
+  const px2vb = renderWidthPx > 0 ? vb.w / renderWidthPx : 0;
+  const labelSize = Math.max(baseLabelSize, MIN_MAIN_LABEL_SCREEN_PX * px2vb);
   const gridMinor = GRID_MINOR[unit];
   const gridMajor = GRID_MAJOR[unit];
 
@@ -285,10 +320,13 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
 
             return geometry.labels.map((mark, index) => {
               const { main, sub } = labelLines(mark, unit);
-              // "small" marks (TAB/GLUE/flap) were previously 0.62x main
-              // size -- bumped closer to the dimension-number size, still
-              // visually subordinate but no longer squint-to-read.
-              const size = mark.small ? labelSize * 0.78 : labelSize;
+              // "small" marks (TAB/GLUE/flap) are 0.78x the main dimension
+              // size -- still visually subordinate, but each floored
+              // independently (to the lower of the two screen-px floors)
+              // so that ratio can't push them back below legible on phone.
+              const rawSize = mark.small ? baseLabelSize * 0.78 : baseLabelSize;
+              const sizeFloorPx = mark.small ? MIN_SUB_LABEL_SCREEN_PX : MIN_MAIN_LABEL_SCREEN_PX;
+              const size = Math.max(rawSize, sizeFloorPx * px2vb);
               const rotated = mark.kind === "tab" || mark.kind === "height";
               const anchor = rotated ? "middle" : mark.kind === "reference" ? "start" : "middle";
 
@@ -312,6 +350,7 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
               // column beside the main label.
               const subX = rotated ? x + size * 0.9 : x;
               const subY = rotated ? y : y + size * 0.9;
+              const subFontSize = Math.max(size * 0.75, MIN_SUB_LABEL_SCREEN_PX * px2vb);
 
               return (
                 <g key={index}>
@@ -333,7 +372,7 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
                       y={subY}
                       textAnchor={anchor}
                       transform={rotated ? `rotate(-90 ${subX} ${subY})` : undefined}
-                      fontSize={size * 0.75}
+                      fontSize={subFontSize}
                       fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                       fill="#6b7280"
                     >
