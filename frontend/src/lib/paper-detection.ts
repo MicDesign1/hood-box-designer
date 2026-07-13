@@ -81,17 +81,50 @@ export interface PaperDetectionResult {
 let cvPromise: Promise<OpenCv> | null = null;
 
 // opencv.js's emscripten module doesn't ship useful types for this loading
-// dance; keep it narrowly typed to what we actually call.
+// dance; keep it narrowly typed to what we actually call. `import type`-only
+// usage (typeof, never a value import) -- TypeScript erases this at compile
+// time, so it costs nothing at runtime and doesn't reintroduce the bundled
+// dependency loadCv() below deliberately avoids.
 type OpenCv = typeof import("@techstark/opencv-js");
+
+// Pinned to the exact version (and file) @techstark/opencv-js@5.0.0-release.1
+// ships as dist/opencv.js -- same build, same detection behavior, just
+// fetched from jsDelivr's npm mirror at runtime instead of bundled as a
+// local Next.js asset. That local chunk was 25.4 MiB, over Cloudflare
+// Pages' 25 MiB per-file limit; loading it from a CDN means it's never part
+// of the Pages deploy at all. Bump this version deliberately, not by
+// floating to `@latest`, if opencv-js is ever upgraded.
+const OPENCV_VERSION = "5.0.0-release.1";
+const OPENCV_CDN_URL = `https://cdn.jsdelivr.net/npm/@techstark/opencv-js@${OPENCV_VERSION}/dist/opencv.js`;
+
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error(`Failed to load ${src}`)));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(script);
+  });
+}
 
 async function loadCv(): Promise<OpenCv> {
   if (!cvPromise) {
     cvPromise = (async () => {
-      const imported = (await import("@techstark/opencv-js")) as unknown as Record<string, unknown>;
-      // webpack's CJS/ESM interop for this UMD build doesn't reliably land
-      // the emscripten module at `.default` -- fall back to the namespace
-      // object itself when `.default` isn't populated.
-      const cvModule = (imported.default ?? imported) as unknown;
+      await loadScript(OPENCV_CDN_URL);
+      // The UMD build's browser-global branch sets `window.cv` to whatever
+      // its async factory returns -- always a Promise the first time
+      // (resolves once the WASM runtime initializes), never the module
+      // synchronously. Same resolution dance the old bundled-import path
+      // already had to handle, just fed from `window.cv` instead of a
+      // dynamic import's namespace object.
+      const cvModule = (window as unknown as { cv?: unknown }).cv;
       if (cvModule instanceof Promise) return (await cvModule) as OpenCv;
       const mod = cvModule as { Mat?: unknown; onRuntimeInitialized?: () => void };
       if (mod.Mat) return cvModule as OpenCv;
