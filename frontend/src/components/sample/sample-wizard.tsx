@@ -581,11 +581,6 @@ export function SampleWizard() {
                 <Camera className="size-4" />
                 {photoCalibration ? "Open photo / recalibrate" : "Take or choose photo"}
               </Button>
-              {referenceDimensions.length > 0 && (
-                <div className="mt-3">
-                  <MeasurementSummary referenceDimensions={referenceDimensions} />
-                </div>
-              )}
             </div>
 
             {state.style !== "tube" ? (
@@ -764,7 +759,7 @@ export function SampleWizard() {
               </details>
             )}
 
-            <MeasurementSummary referenceDimensions={referenceDimensions} />
+            <MeasurementSummary />
 
             {needsExtraMeasurement(state.solveResult) && (
               <Card>

@@ -78,7 +78,7 @@ export default function HomePage() {
       {mode === "design" ? (
         <>
           <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
-            <MeasurementSummary referenceDimensions={referenceDimensions} />
+            <MeasurementSummary />
           </div>
           <DesignMode spec={spec} setSpec={setSpec} specRevision={specRevision} referenceDimensions={referenceDimensions} />
         </>
