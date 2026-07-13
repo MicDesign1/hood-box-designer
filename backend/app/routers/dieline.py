@@ -2,10 +2,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from app.models.box_spec import (
-    BoxSpec,
     CutArc,
     CutElement,
     CutLine,
+    DielineGenerateRequest,
     DielineGenerateResponse,
     GeometryPayload,
     LabelMarkPayload,
@@ -24,8 +24,8 @@ def _cut_payload(segment) -> CutElement:
 
 
 @router.post("/generate", response_model=DielineGenerateResponse)
-def generate_dieline(spec: BoxSpec) -> DielineGenerateResponse:
-    svg, generated, message, warnings, derived, result = generate_dieline_svg(spec)
+def generate_dieline(spec: DielineGenerateRequest) -> DielineGenerateResponse:
+    svg, generated, message, warnings, derived, result = generate_dieline_svg(spec, spec.reference_dimensions)
 
     geometry = None
     if result is not None:
@@ -41,6 +41,7 @@ def generate_dieline(spec: BoxSpec) -> DielineGenerateResponse:
                     y=label.y,
                     kind=label.kind,
                     value=label.value,
+                    value2=label.value2,
                     letter=label.letter,
                     panel_index=label.panel_index,
                     small=label.small,
@@ -70,8 +71,8 @@ def solve_dieline(request: SolveRequest) -> SolveResponse:
 
 
 @router.post("/export/dxf")
-def export_dieline_dxf(spec: BoxSpec) -> Response:
-    dxf_bytes, error = generate_dieline_dxf(spec)
+def export_dieline_dxf(spec: DielineGenerateRequest) -> Response:
+    dxf_bytes, error = generate_dieline_dxf(spec, spec.reference_dimensions)
     if dxf_bytes is None:
         raise HTTPException(status_code=501, detail=error or "DXF export unavailable.")
 

@@ -58,6 +58,12 @@ function labelLines(mark: LabelMark, unit: "in" | "mm"): { main: string; sub: st
       return { main: `flap ${fmtDim(mark.value ?? 0, unit)}`, sub: null };
     case "glue":
       return { main: "GLUE", sub: null };
+    case "height":
+      return { main: `H ${fmtDim(mark.value ?? 0, unit)}`, sub: null };
+    case "blank":
+      return { main: `Blank ${fmtDim(mark.value ?? 0, unit)} x ${fmtDim(mark.value2 ?? 0, unit)}`, sub: null };
+    case "reference":
+      return { main: `${mark.letter ?? ""}: ${fmtDim(mark.value ?? 0, unit)}`, sub: null };
     default:
       return { main: "", sub: null };
   }
@@ -85,11 +91,21 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
 
   const fit = useCallback(() => {
     if (!(totalW > 0) || !(totalH > 0)) return;
-    const margin = Math.max(totalW, totalH) * FIT_MARGIN_RATIO;
-    const next = { x: -margin, y: -margin, w: totalW + margin * 2, h: totalH + margin * 2 };
+    // Dimension callouts (H, blank size, reference legend) can sit outside
+    // the box's own [0,totalW]x[0,totalH] bounds -- fold their positions in
+    // so the default view doesn't crop them off, requiring a manual pan.
+    const labels = geometry?.labels ?? [];
+    const minX = Math.min(0, ...labels.map((l) => l.x));
+    const maxX = Math.max(totalW, ...labels.map((l) => l.x));
+    const minY = Math.min(0, ...labels.map((l) => l.y));
+    const maxY = Math.max(totalH, ...labels.map((l) => l.y));
+    const w = maxX - minX;
+    const h = maxY - minY;
+    const margin = Math.max(w, h) * FIT_MARGIN_RATIO;
+    const next = { x: minX - margin, y: minY - margin, w: w + margin * 2, h: h + margin * 2 };
     vbRef.current = next;
     setVb(next);
-  }, [totalW, totalH]);
+  }, [totalW, totalH, geometry]);
 
   useEffect(() => {
     fit();
@@ -248,12 +264,13 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
           geometry.labels.map((mark, index) => {
             const { main, sub } = labelLines(mark, unit);
             const size = mark.small ? labelSize * 0.62 : labelSize;
+            const anchor = mark.kind === "reference" || mark.kind === "height" ? "start" : "middle";
             return (
               <g key={index}>
                 <text
                   x={mark.x}
                   y={mark.y}
-                  textAnchor="middle"
+                  textAnchor={anchor}
                   fontSize={size}
                   fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                   fontWeight={600}
@@ -265,7 +282,7 @@ export function DielinePreview({ geometry, showCuts, showCreases, showLabels }: 
                   <text
                     x={mark.x}
                     y={mark.y + size * 0.9}
-                    textAnchor="middle"
+                    textAnchor={anchor}
                     fontSize={size * 0.5}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                     fill="#6b7280"

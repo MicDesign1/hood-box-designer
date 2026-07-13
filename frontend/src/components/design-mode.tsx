@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +44,7 @@ import {
   type JointType,
   type RscFluteType,
 } from "@/types/box";
+import type { ReferenceDimension } from "@/types/capture";
 import type { DielineGeometry } from "@/types/geometry";
 
 type NumericField = keyof Pick<BoxSpec, "length" | "width" | "height" | "caliper">;
@@ -81,9 +82,12 @@ export interface DesignModeProps {
   setSpec: React.Dispatch<React.SetStateAction<BoxSpec>>;
   /** Bumped whenever spec is updated from outside (e.g. Photo Mode) so input text resyncs. */
   specRevision: number;
+  /** Reference dimensions captured via Photo Input -- drawn as a legend on
+   * the generated SVG/DXF (requirement B), never read by geometry/scoring. */
+  referenceDimensions?: ReferenceDimension[];
 }
 
-export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
+export function DesignMode({ spec, setSpec, specRevision, referenceDimensions = [] }: DesignModeProps) {
   const [dimensionFormat, setDimensionFormat] = useState<DimensionFormat>("decimal");
   const [inputValues, setInputValues] = useState<Record<NumericField, string>>(() =>
     buildInputValues(spec, "decimal"),
@@ -121,7 +125,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
       setError(null);
 
       try {
-        const result = await fetchDielineSvg(spec, controller.signal);
+        const result = await fetchDielineSvg(spec, referenceDimensions, controller.signal);
         if (controller.signal.aborted) return;
 
         setSvgMarkup(result.svg);
@@ -151,7 +155,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
     void loadDieline();
 
     return () => controller.abort();
-  }, [spec]);
+  }, [spec, referenceDimensions]);
 
   function updateDimension(field: NumericField, rawValue: string) {
     setInputValues((current) => ({ ...current, [field]: rawValue }));
@@ -184,7 +188,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
     setError(null);
 
     try {
-      const blob = await fetchDielineDxf(spec);
+      const blob = await fetchDielineDxf(spec, referenceDimensions);
       downloadDxf(blob, spec);
     } catch (exportError) {
       setError(
@@ -408,7 +412,7 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                   dimensionFormat,
                 )}
               </p>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <div className="print-hide flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <Button
                   onClick={() => downloadSvg(svgMarkup, spec)}
                   className="w-full sm:w-auto"
@@ -425,6 +429,15 @@ export function DesignMode({ spec, setSpec, specRevision }: DesignModeProps) {
                 >
                   {isExportingDxf ? <Loader2 className="size-4 animate-spin" /> : <Download />}
                   Download DXF
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.print()}
+                  className="w-full sm:w-auto"
+                  disabled={!styleIsAvailable || isLoading}
+                >
+                  <Printer />
+                  Print / Save as PDF
                 </Button>
               </div>
             </div>

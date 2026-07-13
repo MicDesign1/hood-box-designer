@@ -48,6 +48,8 @@ UNITS: dict[str, dict[str, float | str]] = {
         "chamferMax": 0.5,
         "hookMax": 0.5,
         "filletMin": 0.125,
+        "labelSize": 0.13,
+        "labelOffset": 0.18,
     },
     "mm": {
         "label": "mm",
@@ -56,6 +58,8 @@ UNITS: dict[str, dict[str, float | str]] = {
         "chamferMax": 12.0,
         "hookMax": 12.0,
         "filletMin": 3.2,
+        "labelSize": 3.3,
+        "labelOffset": 4.5,
     },
 }
 
@@ -77,6 +81,14 @@ HAIRLINE_CSS = f"""
   stroke-width: {STROKE_WIDTH_IN};
   stroke-dasharray: 0.06 0.04;
   shape-rendering: geometricPrecision;
+}}
+.dieline-dim {{
+  fill: #1f2937;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}}
+.dieline-dim-faint {{
+  fill: #9ca3af;
 }}
 """
 
@@ -123,8 +135,13 @@ class LabelMark:
 
     x: float
     y: float
-    kind: str  # "panel" | "tab" | "flap" | "glue"
+    kind: str  # "panel" | "tab" | "flap" | "glue" | "height" | "blank" | "reference"
     value: float | None = None
+    # Second value for two-part callouts (currently only "blank": value=width,
+    # value2=height). Unused by every other kind.
+    value2: float | None = None
+    # Panel letter ("L"/"W") for "panel" kind; the user-supplied label text
+    # for "reference" kind. Unused by every other kind.
     letter: str | None = None
     panel_index: int | None = None
     small: bool = False
@@ -561,6 +578,32 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
             )
         )
 
+    # H callout (box height, not just the L/W panel labels above) and the
+    # overall blank-size callout -- both computed but never drawn before
+    # Phase 4; placed in the left margin / below the drawing respectively,
+    # which _shift_geometry's asymmetric SVG_PAD_LEFT already reserves room
+    # for. Anchored at the true left edge (x=0), not x0 -- x0 is the glue
+    # tab's own right edge for a glued joint (0 only for taped), so anchoring
+    # there would land the callout inside the tab, on top of its "TAB" label.
+    label_offset = float(unit_values["labelOffset"])
+    labels.append(
+        LabelMark(
+            x=-label_offset,
+            y=mid_y,
+            kind="height",
+            value=body_height,
+        )
+    )
+    labels.append(
+        LabelMark(
+            x=x_right / 2,
+            y=total_h + label_offset,
+            kind="blank",
+            value=x_right,
+            value2=total_h,
+        )
+    )
+
     derived = {
         "panel_L": panels[0],
         "panel_W": panels[1],
@@ -631,6 +674,7 @@ def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResul
                 y=label.y + dy,
                 kind=label.kind,
                 value=label.value,
+                value2=label.value2,
                 letter=label.letter,
                 panel_index=label.panel_index,
                 small=label.small,
@@ -645,11 +689,142 @@ def _shift_geometry(result: DielineResult, dx: float, dy: float) -> DielineResul
     )
 
 
+def append_reference_legend(result: DielineResult, reference_dimensions: list[tuple[str, float]]) -> DielineResult:
+    """Appends one LabelMark(kind="reference") per (label, raw_inches) pair,
+    stacked in a left-aligned block below the blank-size callout. Purely
+    additive to `labels` -- does not touch cuts, creases, or derived, so it
+    cannot affect golden-file geometry parity.
+
+    Takes plain (label, raw_inches) tuples, not the backend's pydantic
+    ReferenceDimension model -- this module (and the `dieline` CLI that also
+    imports it) has no pydantic dependency, by design (see module docstring).
+    Converting the pydantic model to plain tuples is the caller's job
+    (app/services/dieline_generator.py).
+    """
+    if not reference_dimensions:
+        return result
+    unit_values = _unit_constants(result.unit)
+    label_offset = float(unit_values["labelOffset"])
+    label_size = float(unit_values["labelSize"])
+    legend_y_start = result.total_h + label_offset * 2 + label_size
+    new_labels = list(result.labels)
+    for index, (label, raw_inches) in enumerate(reference_dimensions):
+        new_labels.append(
+            LabelMark(
+                x=0.0,
+                y=legend_y_start + index * label_size * 1.6,
+                kind="reference",
+                value=raw_inches,
+                letter=label,
+            )
+        )
+    return DielineResult(
+        ok=result.ok,
+        warnings=result.warnings,
+        cuts=result.cuts,
+        creases=result.creases,
+        labels=new_labels,
+        total_w=result.total_w,
+        total_h=result.total_h,
+        unit=result.unit,
+        derived=result.derived,
+    )
+
+
+# Faithful port of frontend/src/lib/imperial.ts's formatFractionInches /
+# snapToFraction, so dimension callouts on the exported dieline read
+# identically to the app's own on-screen/PDF formatting. Display-only: never
+# used by any geometry or allowance math in this module.
+FRACTION_DENOMINATORS = (2, 4, 8, 16, 32, 64)
+
+
+def _gcd(a: int, b: int) -> int:
+    a, b = abs(a), abs(b)
+    while b:
+        a, b = b, a % b
+    return a
+
+
+def _snap_to_fraction(inches: float, max_denominator: int) -> tuple[int, int, int]:
+    sign = -1 if inches < 0 else 1
+    absolute = abs(inches)
+    whole = math.floor(absolute)
+    fractional = absolute - whole
+
+    best_numerator = 0
+    best_denominator = 1
+    best_error = math.inf
+    for denominator in FRACTION_DENOMINATORS:
+        if denominator > max_denominator:
+            break
+        numerator = round(fractional * denominator)
+        error = abs(fractional - numerator / denominator)
+        if error < best_error:
+            best_error = error
+            best_numerator = numerator
+            best_denominator = denominator
+
+    adjusted_whole = whole
+    numerator = best_numerator
+    denominator = best_denominator
+    if numerator == denominator:
+        adjusted_whole += 1
+        numerator = 0
+
+    divisor = _gcd(numerator, denominator)
+    reduced_numerator = numerator // divisor
+    reduced_denominator = denominator // divisor
+
+    return adjusted_whole * sign, reduced_numerator, reduced_denominator
+
+
+def format_fraction_inches(inches: float, max_denominator: int = 32) -> str:
+    whole, numerator, denominator = _snap_to_fraction(inches, max_denominator)
+    if numerator == 0:
+        return str(whole)
+    absolute_whole = abs(whole)
+    fraction = f"{numerator}/{denominator}"
+    if absolute_whole == 0:
+        return f"-{fraction}" if whole < 0 else fraction
+    return f"-{absolute_whole} {fraction}" if whole < 0 else f"{absolute_whole} {fraction}"
+
+
+def _fmt_dim(value: float, unit: str) -> str:
+    if unit == "mm":
+        rounded = round(value * 10) / 10
+        text = f"{rounded:g}"
+        return f"{text} mm"
+    return f'{format_fraction_inches(value, 32)}"'
+
+
+def _label_lines(mark: LabelMark, unit: str) -> tuple[str, str | None]:
+    """Same text a mark would show in the frontend live preview
+    (dieline-preview.tsx's labelLines) -- kept in sync by hand since this
+    module has no dependency on frontend code."""
+    if mark.kind == "panel":
+        return f"{mark.letter or ''} {_fmt_dim(mark.value or 0, unit)}", f"panel {mark.panel_index or ''}"
+    if mark.kind == "tab":
+        return "TAB", _fmt_dim(mark.value or 0, unit)
+    if mark.kind == "flap":
+        return f"flap {_fmt_dim(mark.value or 0, unit)}", None
+    if mark.kind == "glue":
+        return "GLUE", None
+    if mark.kind == "height":
+        return f"H {_fmt_dim(mark.value or 0, unit)}", None
+    if mark.kind == "blank":
+        return f"Blank {_fmt_dim(mark.value or 0, unit)} x {_fmt_dim(mark.value2 or 0, unit)}", None
+    if mark.kind == "reference":
+        return f"{mark.letter or ''}: {_fmt_dim(mark.value or 0, unit)}", None
+    return "", None
+
+
 def build_svg(result: DielineResult) -> str:
-    """Layered SVG (cuts + creases only) with physical inch sizing and margin padding."""
+    """Layered SVG (cuts + creases + dimension callouts) with physical inch
+    sizing and margin padding."""
     padded = _shift_geometry(result, SVG_PAD_LEFT, SVG_PAD)
+    label_max_y = max((label.y for label in padded.labels), default=padded.total_h)
     view_w = padded.total_w + SVG_PAD
-    view_h = padded.total_h + SVG_PAD
+    view_h = max(padded.total_h + SVG_PAD, label_max_y + SVG_PAD)
     width_pt = view_w * 72
     height_pt = view_h * 72
 
@@ -692,6 +867,40 @@ def build_svg(result: DielineResult) -> str:
             )
     drawing.add(cut_group)
 
+    label_size = float(_unit_constants(padded.unit)["labelSize"])
+    dim_group = drawing.g(id="dimensions")
+    for mark in padded.labels:
+        main, sub = _label_lines(mark, padded.unit)
+        if not main:
+            continue
+        size = label_size * 0.62 if mark.small else label_size
+        # "height"/"reference" grow rightward from their anchor point instead
+        # of centering, so they can't overflow left past x=0 into the SVG's
+        # narrow left margin.
+        anchor = "start" if mark.kind in ("reference", "height") else "middle"
+        css_class = "dieline-dim dieline-dim-faint" if mark.faint else "dieline-dim"
+        dim_group.add(
+            drawing.text(
+                main,
+                insert=(mark.x, mark.y),
+                text_anchor=anchor,
+                font_size=size,
+                class_=css_class,
+            )
+        )
+        if sub:
+            dim_group.add(
+                drawing.text(
+                    sub,
+                    insert=(mark.x, mark.y + size * 0.9),
+                    text_anchor=anchor,
+                    font_size=size * 0.5,
+                    class_="dieline-dim",
+                    fill="#6b7280",
+                )
+            )
+    drawing.add(dim_group)
+
     return drawing.tostring()
 
 
@@ -703,10 +912,13 @@ def _configure_dxf_units(doc: DxfDrawing, unit: str) -> None:
 
 def build_dxf(result: DielineResult) -> bytes:
     """Port of reference buildDXF — simple LINE entities, no display padding."""
+    from ezdxf.enums import TextEntityAlignment
+
     doc: DxfDrawing = ezdxf.new("R2010")
     _configure_dxf_units(doc, result.unit)
     doc.layers.add("CUT", color=1)
     doc.layers.add("CREASE", color=3)
+    doc.layers.add("DIMENSION", color=5)
     if "DASHED" not in doc.linetypes:
         doc.linetypes.add(
             "DASHED",
@@ -741,6 +953,27 @@ def build_dxf(result: DielineResult) -> bytes:
             (_round_coord(segment.x2), _round_coord(segment.y2)),
             dxfattribs={"layer": "CREASE", "linetype": "DASHED"},
         )
+
+    label_size = float(_unit_constants(result.unit)["labelSize"])
+    for mark in result.labels:
+        main, sub = _label_lines(mark, result.unit)
+        if not main:
+            continue
+        size = label_size * 0.62 if mark.small else label_size
+        align = TextEntityAlignment.LEFT if mark.kind in ("reference", "height") else TextEntityAlignment.MIDDLE_CENTER
+        msp.add_text(main, dxfattribs={"layer": "DIMENSION", "height": size}).set_placement(
+            (_round_coord(mark.x), _round_coord(mark.y)), align=align
+        )
+        if sub:
+            # Matches build_svg's sub-line offset exactly (+size*0.9, not
+            # flipped) -- this codebase already feeds the same Y-down data
+            # straight into DXF as SVG (no axis flip anywhere else in this
+            # file), so a flip here would misplace text relative to the
+            # cut/crease geometry it's meant to sit beside.
+            sub_align = align
+            msp.add_text(sub, dxfattribs={"layer": "DIMENSION", "height": size * 0.5}).set_placement(
+                (_round_coord(mark.x), _round_coord(mark.y + size * 0.9)), align=sub_align
+            )
 
     buffer = io.StringIO()
     doc.write(buffer)

@@ -10,11 +10,13 @@ import {
   Download,
   Loader2,
   Package,
+  Printer,
   RotateCcw,
   Ruler,
 } from "lucide-react";
 
 import { DielinePreviewPanel } from "@/components/dieline-preview-panel";
+import { MeasurementSummary } from "@/components/measurement-summary";
 import {
   BlankHeightDiagram,
   BlankWidthDiagram,
@@ -267,7 +269,7 @@ export function SampleWizard() {
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      const payload = solveResultToGeneratePayload(result, flute);
+      const payload = solveResultToGeneratePayload(result, flute, referenceDimensions);
       const response = await fetchDielineSvgFromPayload(payload);
       setSvgMarkup(response.svg);
       setGeometry(response.geometry ?? null);
@@ -286,7 +288,7 @@ export function SampleWizard() {
     } finally {
       setPreviewLoading(false);
     }
-  }, []);
+  }, [referenceDimensions]);
 
   useEffect(() => {
     const { solveResult, flute } = state;
@@ -407,7 +409,7 @@ export function SampleWizard() {
         <div className={`mx-auto flex items-center gap-3 px-4 py-4 ${mainWidthClass}`}>
           <Link
             href="/"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground"
+            className="print-hide flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground"
             aria-label="Back to home"
           >
             <ArrowLeft className="size-4" />
@@ -416,7 +418,7 @@ export function SampleWizard() {
             <h1 className="truncate text-lg font-semibold">Price a Sample</h1>
             <p className="text-sm text-muted-foreground">Measure a flat blank, get the box size</p>
           </div>
-          <Package className="size-5 shrink-0 text-muted-foreground" />
+          <Package className="size-5 shrink-0 text-muted-foreground print-hide" />
         </div>
       </header>
 
@@ -581,15 +583,8 @@ export function SampleWizard() {
                 {photoCalibration ? "Open photo / recalibrate" : "Take or choose photo"}
               </Button>
               {referenceDimensions.length > 0 && (
-                <div data-testid="reference-dimensions-list" className="mt-3 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                  <p className="font-medium">Reference dimensions</p>
-                  <ul className="mt-1 space-y-0.5 text-muted-foreground">
-                    {referenceDimensions.map((ref, i) => (
-                      <li key={i}>
-                        {ref.label}: <span className="font-mono">{formatFractionInches(ref.rawInches)}</span>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="mt-3">
+                  <MeasurementSummary referenceDimensions={referenceDimensions} />
                 </div>
               )}
             </div>
@@ -770,6 +765,8 @@ export function SampleWizard() {
               </details>
             )}
 
+            <MeasurementSummary referenceDimensions={referenceDimensions} />
+
             {needsExtraMeasurement(state.solveResult) && (
               <Card>
                 <CardContent className="space-y-4 pt-6">
@@ -824,7 +821,7 @@ export function SampleWizard() {
                           "fraction",
                         )}
                       </p>
-                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                      <div className="print-hide flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                         <Button
                           variant="outline"
                           disabled={exportingDxf}
@@ -834,6 +831,7 @@ export function SampleWizard() {
                               const payload = solveResultToGeneratePayload(
                                 state.solveResult!,
                                 state.flute!,
+                                referenceDimensions,
                               );
                               const blob = await fetchDielineDxfFromPayload(payload);
                               downloadDxfFromPayload(blob, payload);
@@ -856,6 +854,7 @@ export function SampleWizard() {
                             const payload = solveResultToGeneratePayload(
                               state.solveResult!,
                               state.flute!,
+                              referenceDimensions,
                             );
                             downloadSvgFromPayload(svgMarkup, payload);
                           }}
@@ -863,11 +862,15 @@ export function SampleWizard() {
                           <Download className="size-4" />
                           Download SVG
                         </Button>
+                        <Button variant="outline" onClick={() => window.print()}>
+                          <Printer className="size-4" />
+                          Print / Save as PDF
+                        </Button>
                       </div>
                     </div>
                     <Button
                       variant="secondary"
-                      className="w-full sm:w-auto"
+                      className="print-hide w-full sm:w-auto"
                       onClick={async () => {
                         const text = copySpecText(
                           state.solveResult!,
@@ -909,7 +912,7 @@ export function SampleWizard() {
               </Card>
             )}
 
-            <Button variant="ghost" className="w-full" onClick={reset}>
+            <Button variant="ghost" className="print-hide w-full" onClick={reset}>
               <RotateCcw className="size-4" />
               Start over
             </Button>

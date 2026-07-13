@@ -1,6 +1,15 @@
 import { formatDecimalInches } from "@/lib/imperial";
 import { caliperForSpec, type BoxSpec } from "@/types/box";
+import type { ReferenceDimension } from "@/types/capture";
 import type { DielineGeometry } from "@/types/geometry";
+
+/** Wire shape for the backend's ReferenceDimension model (snake_case,
+ * raw_inches) -- distinct from the frontend's own camelCase ReferenceDimension
+ * (types/capture.ts) so this conversion is a visible, deliberate step, not
+ * an accidental shape coincidence. */
+export function toReferenceDimensionPayload(refs: ReferenceDimension[]): { label: string; raw_inches: number }[] {
+  return refs.map((ref) => ({ label: ref.label, raw_inches: ref.rawInches }));
+}
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
@@ -31,9 +40,14 @@ export interface BoxSpecPayload {
   flute_type?: BoxSpec["fluteType"];
   joint?: BoxSpec["joint"];
   tab_width?: number;
+  /** Annotation-only legend entries (requirement B) -- never read by
+   * geometry/scoring math on either side. Omitted entirely when empty, so
+   * every existing caller/fixture that builds a payload without this field
+   * is unaffected. */
+  reference_dimensions?: { label: string; raw_inches: number }[];
 }
 
-export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
+export function toBoxSpecPayload(spec: BoxSpec, referenceDimensions: ReferenceDimension[] = []): BoxSpecPayload {
   const payload: BoxSpecPayload = {
     fefco_code: spec.style,
     length: spec.length,
@@ -51,6 +65,10 @@ export function toBoxSpecPayload(spec: BoxSpec): BoxSpecPayload {
     if (spec.joint) {
       payload.joint = spec.joint;
     }
+  }
+
+  if (referenceDimensions.length > 0) {
+    payload.reference_dimensions = toReferenceDimensionPayload(referenceDimensions);
   }
 
   return payload;
@@ -92,12 +110,13 @@ export async function fetchDielineDxfFromPayload(payload: BoxSpecPayload): Promi
 
 export async function fetchDielineSvg(
   spec: BoxSpec,
+  referenceDimensions: ReferenceDimension[] = [],
   signal?: AbortSignal,
 ): Promise<DielineGenerateResponse> {
   const response = await fetch(apiUrl("/api/dieline/generate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toBoxSpecPayload(spec)),
+    body: JSON.stringify(toBoxSpecPayload(spec, referenceDimensions)),
     signal,
   });
 
@@ -109,11 +128,11 @@ export async function fetchDielineSvg(
   return response.json() as Promise<DielineGenerateResponse>;
 }
 
-export async function fetchDielineDxf(spec: BoxSpec): Promise<Blob> {
+export async function fetchDielineDxf(spec: BoxSpec, referenceDimensions: ReferenceDimension[] = []): Promise<Blob> {
   const response = await fetch(apiUrl("/api/dieline/export/dxf"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toBoxSpecPayload(spec)),
+    body: JSON.stringify(toBoxSpecPayload(spec, referenceDimensions)),
   });
 
   if (!response.ok) {

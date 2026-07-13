@@ -1,6 +1,7 @@
 import type { SampleFlute, SampleStyle, SolveResponse } from "@/types/sample";
 import { FLUTE_CALIPER_IN } from "@/types/box";
-import { apiUrl, type BoxSpecPayload } from "@/lib/dieline";
+import { apiUrl, toReferenceDimensionPayload, type BoxSpecPayload } from "@/lib/dieline";
+import type { ReferenceDimension } from "@/types/capture";
 
 export interface SolveRequestPayload {
   flute: SampleFlute;
@@ -52,6 +53,7 @@ const FEFCO_FROM_SOLVE: Record<SampleStyle, BoxSpecPayload["fefco_code"]> = {
 export function solveResultToGeneratePayload(
   result: SolveResponse,
   flute: SampleFlute,
+  referenceDimensions: ReferenceDimension[] = [],
 ): BoxSpecPayload {
   const payload: BoxSpecPayload = {
     fefco_code: FEFCO_FROM_SOLVE[result.style],
@@ -65,6 +67,9 @@ export function solveResultToGeneratePayload(
   };
   if (result.joint === "glued") {
     payload.tab_width = result.tab_width ?? SAMPLE_TAB_WIDTH;
+  }
+  if (referenceDimensions.length > 0) {
+    payload.reference_dimensions = toReferenceDimensionPayload(referenceDimensions);
   }
   return payload;
 }

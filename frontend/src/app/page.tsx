@@ -6,6 +6,7 @@ import { Camera, ClipboardList, Ruler as RulerIcon, Package } from "lucide-react
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DesignMode } from "@/components/design-mode";
+import { MeasurementSummary } from "@/components/measurement-summary";
 import { PhotoMode } from "@/components/photo-mode";
 import { cn } from "@/lib/utils";
 import { DEFAULT_BOX_SPEC, type BoxSpec } from "@/types/box";
@@ -17,9 +18,9 @@ export default function HomePage() {
   const [mode, setMode] = useState<Mode>("design");
   const [spec, setSpec] = useState<BoxSpec>(DEFAULT_BOX_SPEC);
   const [specRevision, setSpecRevision] = useState(0);
-  // Phase 3, minimal: mirrors whatever the photo session last reported as
-  // its kept reference markers. Phase 4's real data table (proposal §5)
-  // replaces this list with the full raw-markers/L-W-H/Outside table.
+  // Mirrors whatever the photo session last reported as its kept reference
+  // markers -- drives both the on-screen MeasurementSummary and the legend
+  // drawn onto the exported SVG/DXF.
   const [referenceDimensions, setReferenceDimensions] = useState<ReferenceDimension[]>([]);
 
   function applyPhotoMeasurements(dims: { length: number; width: number; height: number }) {
@@ -44,7 +45,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2 print-hide">
             <Link
               href="/sample"
               className={cn(buttonVariants({ size: "sm", variant: "outline" }), "gap-1.5")}
@@ -76,22 +77,10 @@ export default function HomePage() {
 
       {mode === "design" ? (
         <>
-          {referenceDimensions.length > 0 && (
-            <div
-              data-testid="reference-dimensions-list"
-              className="mx-auto max-w-7xl px-4 pt-6 text-sm sm:px-6 lg:px-8"
-            >
-              <p className="font-semibold">Reference dimensions</p>
-              <ul className="mt-1 space-y-0.5 text-muted-foreground">
-                {referenceDimensions.map((ref, i) => (
-                  <li key={i}>
-                    {ref.label}: <span className="font-mono">{ref.rawInches.toFixed(3)}&quot;</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <DesignMode spec={spec} setSpec={setSpec} specRevision={specRevision} />
+          <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+            <MeasurementSummary referenceDimensions={referenceDimensions} />
+          </div>
+          <DesignMode spec={spec} setSpec={setSpec} specRevision={specRevision} referenceDimensions={referenceDimensions} />
         </>
       ) : (
         <PhotoMode onApplyMeasurements={applyPhotoMeasurements} onReferenceDimensions={setReferenceDimensions} />

@@ -2,6 +2,8 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
+from app.models.capture import ReferenceDimension
+
 FefcoCode = Literal["0200", "0201", "0202", "0203", "0204", "0300", "0409", "0427", "0713", "hsc", "tube"]
 
 IMPLEMENTED_FEFCO_CODES: set[str] = {"0200", "0201", "0202", "0203", "0713", "hsc", "tube"}
@@ -54,13 +56,25 @@ class BoxSpec(BaseModel):
     )
 
 
+class DielineGenerateRequest(BoxSpec):
+    """The generate/export request body: a BoxSpec plus an optional set of
+    reference dimensions to draw as a legend (requirement B). Deliberately a
+    superset, not a merge -- `reference_dimensions` defaults to empty, so
+    every existing caller sending a plain BoxSpec body is unaffected, and
+    dieline_core's own geometry math never sees this field (see
+    app/services/dieline_generator.py, the only place it's read)."""
+
+    reference_dimensions: list[ReferenceDimension] = Field(default_factory=list)
+
+
 class LabelMarkPayload(BaseModel):
     """A dimension callout position, in drawing units (unpadded)."""
 
     x: float
     y: float
-    kind: Literal["panel", "tab", "flap", "glue"]
+    kind: Literal["panel", "tab", "flap", "glue", "height", "blank", "reference"]
     value: float | None = None
+    value2: float | None = Field(default=None, description="Second value for two-part callouts (currently 'blank' only).")
     letter: str | None = None
     panel_index: int | None = None
     small: bool = False

@@ -15,9 +15,20 @@ from typing import Any
 import svgwrite
 
 from app.models.box_spec import IMPLEMENTED_FEFCO_CODES, BoxSpec
-from dieline_core.geometry import ArcSegment, DielineResult, build_dieline, build_dxf, build_svg
+from app.models.capture import ReferenceDimension
+from dieline_core.geometry import ArcSegment, DielineResult, append_reference_legend, build_dieline, build_dxf, build_svg
 
 __all__ = ["ArcSegment", "DielineResult", "generate_dieline_svg", "generate_dieline_dxf"]
+
+
+def _as_plain_tuples(reference_dimensions: list[ReferenceDimension] | None) -> list[tuple[str, float]]:
+    """Converts the pydantic ReferenceDimension model to the plain tuples
+    dieline_core.geometry.append_reference_legend expects -- dieline_core has
+    no pydantic dependency (see its module docstring), so that conversion
+    happens here, at the FastAPI-facing boundary, not inside dieline_core."""
+    if not reference_dimensions:
+        return []
+    return [(ref.label, ref.raw_inches) for ref in reference_dimensions]
 
 
 def _coming_soon_svg(spec: BoxSpec) -> str:
@@ -48,11 +59,15 @@ def _coming_soon_svg(spec: BoxSpec) -> str:
 
 def generate_dieline_svg(
     spec: BoxSpec,
+    reference_dimensions: list[ReferenceDimension] | None = None,
 ) -> tuple[str, bool, str | None, list[str], dict[str, Any], DielineResult | None]:
     """Returns (svg, generated, message, warnings, derived, geometry).
 
     `geometry` is the un-padded DielineResult used to drive the live preview;
     it is None when the style isn't implemented or the inputs don't resolve.
+    `reference_dimensions` is annotation-only (requirement B's legend) --
+    purely additive to `labels`, never read by build_dieline's own geometry
+    math.
     """
     if spec.fefco_code not in IMPLEMENTED_FEFCO_CODES:
         return (
@@ -75,6 +90,8 @@ def generate_dieline_svg(
             None,
         )
 
+    result = append_reference_legend(result, _as_plain_tuples(reference_dimensions))
+
     return (
         build_svg(result),
         True,
@@ -85,12 +102,17 @@ def generate_dieline_svg(
     )
 
 
-def generate_dieline_dxf(spec: BoxSpec) -> tuple[bytes | None, str | None]:
+def generate_dieline_dxf(
+    spec: BoxSpec,
+    reference_dimensions: list[ReferenceDimension] | None = None,
+) -> tuple[bytes | None, str | None]:
     if spec.fefco_code not in IMPLEMENTED_FEFCO_CODES:
         return None, f"DXF export is not available for FEFCO {spec.fefco_code} yet."
 
     result = build_dieline(spec.model_dump())
     if not result.ok or not result.cuts:
         return None, "Unable to build DXF geometry."
+
+    result = append_reference_legend(result, _as_plain_tuples(reference_dimensions))
 
     return build_dxf(result), None

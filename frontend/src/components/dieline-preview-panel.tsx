@@ -48,7 +48,7 @@ export function DielinePreviewPanel({
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        <div className="print-hide flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Layers
           </span>
