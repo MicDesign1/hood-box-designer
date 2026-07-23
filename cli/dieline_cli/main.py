@@ -2,6 +2,8 @@
 
 Generation supports table-driven 0201 (RSC), HSC, and tube styles.
 `solve` recovers inside dimensions from flat blank measurements.
+`validate` checks a DXF file on disk for geometry defects (dangling/butted
+endpoints, unclosed cut chains, creases not landing on cut vertices, etc).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from dieline_core.flutes import SUPPORTED_FLUTES, caliper_for_flute
 from dieline_core.geometry import build_dieline, build_dxf, build_svg
 from dieline_core.scoring import RSC_0201_SCORING_FLUTES, normalize_scoring_flute, scoring_flute_error
 from dieline_core.solver import Measurements, solve_measurements, validate_measurements, TUBE_FLAP_H_ERROR
+from dieline_core.validate import DEFAULT_NEAR_TOL, DEFAULT_SNAP_TOL, RULE_HELP, validate_dxf
 
 PROG = "dieline"
 GENERATE_STYLES = ("0201", "hsc", "tube")
@@ -54,6 +57,20 @@ SOLVE_EXAMPLE = (
     "Example:\n"
     "  dieline solve --flute C --style rsc --blank-w 42.625 --blank-h 13.625 "
     "--scores-x 12.125,21.3125,33.5 --scores-y 4.625,9.0\n"
+)
+
+VALIDATE_EXAMPLE = (
+    "Rules (each a distinct, never-collapsed failure class):\n"
+    + "\n".join(f"  {rule}: {text}" for rule, text in RULE_HELP.items())
+    + "\n\n"
+    "Coincidence model: endpoints within --snap-tol are the same vertex (exact\n"
+    "float equality is wrong -- even ArtiosCAD's own exports carry ~1e-5 wobble).\n"
+    "A gap larger than --snap-tol but no larger than --near-tol is R4 (butted,\n"
+    "not connected); anything with no neighbour within --near-tol is R3 (dangling).\n\n"
+    "Examples:\n"
+    "  dieline validate box.dxf\n"
+    "  dieline validate box.dxf --json\n"
+    "  dieline validate box.dxf --near-tol 0.001 --flute C\n"
 )
 
 
@@ -312,7 +329,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path for --generate (.dxf or .svg). Defaults to ./dieline-{style}-{L}x{W}x{D}.dxf.",
     )
 
+    validate = subparsers.add_parser(
+        "validate",
+        help="Check a DXF file on disk for geometry defects.",
+        description=(
+            "Read a DXF file and report geometry defects that CAD dieline validation\n"
+            "engines (e.g. ArtiosCAD) reject -- dangling or butted cut endpoints, cut\n"
+            "chains that don't close, creases landing mid-span instead of on a vertex,\n"
+            "crossings without a shared vertex, and slot-width sanity. Validates the\n"
+            "artifact on disk, not the generator's intent."
+        ),
+        epilog=VALIDATE_EXAMPLE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    validate.add_argument("dxf_path", metavar="FILE.dxf", help="Path to the DXF file to validate.")
+    validate.add_argument("--json", action="store_true", help="Emit a JSON report instead of the human-readable summary.")
+    validate.add_argument(
+        "--snap-tol",
+        type=float,
+        default=DEFAULT_SNAP_TOL,
+        dest="snap_tol",
+        metavar="IN",
+        help=f"Endpoints within this distance (inches) are the same vertex -- exact equality, never used. Default {DEFAULT_SNAP_TOL}.",
+    )
+    validate.add_argument(
+        "--near-tol",
+        type=float,
+        default=DEFAULT_NEAR_TOL,
+        dest="near_tol",
+        metavar="IN",
+        help=f"Detection threshold (inches) for R4's butted-not-connected defect; beyond this is R3 dangling. Default {DEFAULT_NEAR_TOL}.",
+    )
+    validate.add_argument(
+        "--flute",
+        default=None,
+        metavar="TYPE",
+        help="Flute (B/C/DW) to check detected slot widths against tab-and-slot-conventions.md (R8). Optional -- omit for informational-only slot report.",
+    )
+
     return parser
+
+
+def _run_validate(args: argparse.Namespace) -> int:
+    dxf_path = Path(args.dxf_path)
+    if not dxf_path.is_file():
+        return _fail(f"'{args.dxf_path}' is not a file.")
+    if args.snap_tol <= 0:
+        return _fail("--snap-tol must be a positive number.")
+    if args.near_tol <= args.snap_tol:
+        return _fail("--near-tol must be greater than --snap-tol.")
+
+    try:
+        report = validate_dxf(dxf_path, snap_tol=args.snap_tol, near_tol=args.near_tol, flute=args.flute)
+    except Exception as exc:  # noqa: BLE001 -- surface any DXF parse failure as a clean user error
+        return _fail(f"could not read '{args.dxf_path}': {exc}")
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        for defect in report.defects:
+            points_text = " / ".join(f"({p[0]:.6g}, {p[1]:.6g})" for p in defect.points)
+            handles_text = f" [handles: {', '.join(defect.handles)}]" if defect.handles else ""
+            print(f"{defect.rule}: {defect.message}" + (f" at {points_text}" if points_text else "") + handles_text)
+        for line in report.info:
+            print(f"  {line}")
+        print()
+        print("Totals: " + "  ".join(f"{rule}={report.counts[rule]}" for rule in RULE_HELP))
+
+    return 0 if report.ok else 1
 
 
 def _run_generate(args: argparse.Namespace) -> int:
@@ -523,6 +607,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_generate(args)
     if args.command == "solve":
         return _run_solve(args)
+    if args.command == "validate":
+        return _run_validate(args)
 
     parser.print_usage(sys.stderr)
     return 2
