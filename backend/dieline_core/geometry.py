@@ -249,6 +249,102 @@ def _fillet(
     return p_a, p_b
 
 
+# Crease-to-cut welding (Phase 2 of the dieline-validate initiative): makes
+# every crease terminate on an actual cut vertex instead of merely touching
+# cut geometry, matching the pattern verified against a real ArtiosCAD export
+# (skills/dieline/references/artios-dxf-conventions.md) -- CAD dieline
+# validators reject a crease landing mid-span of a cut ("butted, not
+# connected") even when the coordinates coincide exactly. Two distinct cases,
+# both purely additive/corrective and never introducing a new coordinate:
+#
+#   (a) T-junction: a crease endpoint lands exactly mid-span of one existing
+#       cut LineSegment (e.g. a panel-boundary crease crossing a slot's
+#       centerline). Split that one segment into two at the existing point --
+#       mirrors the exemplar's own slot-bottom pattern (two cuts + one crease
+#       sharing a vertex).
+#   (b) Fillet-detached corner: a flap crease's endpoint was computed from the
+#       pre-fillet sharp corner, but that corner has since been rounded off by
+#       _fillet() and no cut geometry passes through it anymore. Re-point the
+#       crease endpoint to the nearest already-existing cut vertex (the
+#       fillet's own trim point) -- never a newly computed coordinate.
+#
+# Never touches x_boundaries, y_top/y_bottom, panel/score positions, or
+# total_w/total_h -- only cut-segment splitting and crease-endpoint identity.
+_WELD_TOL = 1e-7
+_WELD_MAX_SNAP_IN = 1.0
+
+
+def _weld_point_on_segment_param(
+    point: tuple[float, float], a: tuple[float, float], b: tuple[float, float], tol: float
+) -> float | None:
+    ax, ay = a
+    bx, by = b
+    px, py = point
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq < 1e-18:
+        return None
+    cross = dx * (py - ay) - dy * (px - ax)
+    if abs(cross) / math.sqrt(length_sq) > tol:
+        return None  # not colinear
+    t = ((px - ax) * dx + (py - ay) * dy) / length_sq
+    if t <= tol or t >= 1 - tol:
+        return None  # at (or past) an endpoint, not the interior
+    return t
+
+
+def _weld_creases_to_cut_vertices(
+    cuts: list[LineSegment | ArcSegment], creases: list[LineSegment]
+) -> tuple[list[LineSegment | ArcSegment], list[LineSegment]]:
+    welded_cuts: list[LineSegment | ArcSegment] = list(cuts)
+
+    def vertices() -> list[tuple[float, float]]:
+        points: list[tuple[float, float]] = []
+        for seg in welded_cuts:
+            points.append((seg.x1, seg.y1))
+            points.append((seg.x2, seg.y2))
+        return points
+
+    def nearest_vertex(point: tuple[float, float]) -> tuple[tuple[float, float] | None, float]:
+        best: tuple[float, float] | None = None
+        best_dist = math.inf
+        for candidate in vertices():
+            dist = math.hypot(point[0] - candidate[0], point[1] - candidate[1])
+            if dist < best_dist:
+                best_dist = dist
+                best = candidate
+        return best, best_dist
+
+    def weld_point(point: tuple[float, float]) -> tuple[float, float]:
+        nearest, nearest_dist = nearest_vertex(point)
+        if nearest is not None and nearest_dist <= _WELD_TOL:
+            return point  # already lands exactly on a cut vertex
+
+        for index, seg in enumerate(welded_cuts):
+            if not isinstance(seg, LineSegment):
+                continue
+            t = _weld_point_on_segment_param(point, (seg.x1, seg.y1), (seg.x2, seg.y2), _WELD_TOL)
+            if t is not None:
+                welded_cuts[index : index + 1] = [
+                    LineSegment(seg.x1, seg.y1, point[0], point[1]),
+                    LineSegment(point[0], point[1], seg.x2, seg.y2),
+                ]
+                return point  # (a): now a genuine shared vertex
+
+        if nearest is not None and nearest_dist <= _WELD_MAX_SNAP_IN:
+            return nearest  # (b): re-point to the existing fillet-trimmed vertex
+
+        return point  # no plausible cut vertex nearby -- leave as-is
+
+    welded_creases: list[LineSegment] = []
+    for crease in creases:
+        x1, y1 = weld_point((crease.x1, crease.y1))
+        x2, y2 = weld_point((crease.x2, crease.y2))
+        welded_creases.append(LineSegment(x1, y1, x2, y2))
+
+    return welded_cuts, welded_creases
+
+
 def build_dieline(spec: dict[str, Any]) -> DielineResult:
     """Faithful Python port of the reference buildDieline (sharp slot corners).
 
@@ -629,6 +725,8 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         warnings.append(
             "0713 crash-lock uses simplified bottom geometry; validate locks on press before production."
         )
+
+    cuts, creases = _weld_creases_to_cut_vertices(cuts, creases)
 
     return DielineResult(
         ok=True,

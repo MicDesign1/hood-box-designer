@@ -45,10 +45,12 @@ def test_exemplar_is_clean_on_r1_through_r7():
     assert report.convention == "artios"
 
 
-def test_our_generator_baseline_fails_r7_but_not_r1_to_r6(tmp_path):
-    """Documents the actual Phase-0/Phase-1 finding: our coordinate math is
-    sound (R1-R6 clean) but creases land mid-span of filleted cut geometry
-    instead of on a shared vertex (R7) -- the reviewer's real complaint."""
+def test_our_generator_baseline_is_fully_clean_after_the_weld_fix(tmp_path):
+    """Phase 2 acceptance: the crease-to-cut welding in build_dieline (see
+    _weld_creases_to_cut_vertices in dieline_core.geometry) splits cuts at
+    T-junctions and re-points fillet-detached crease endpoints, so the
+    12x9x4 C-flute RSC baseline that failed R7 pervasively in Phase 1 is now
+    fully clean."""
     result = build_dieline(
         {
             "fefco_code": "0201",
@@ -66,9 +68,8 @@ def test_our_generator_baseline_fails_r7_but_not_r1_to_r6(tmp_path):
     out.write_bytes(build_dxf(result))
 
     report = validate_dxf(out)
-    for rule in ("R1", "R2", "R3", "R4", "R5", "R6"):
+    for rule in ("R1", "R2", "R3", "R4", "R5", "R6", "R7"):
         assert report.counts[rule] == 0, f"{rule} unexpectedly nonzero: {[d.message for d in report.defects if d.rule == rule]}"
-    assert report.counts["R7"] > 0, "expected R7 (crease-not-on-vertex) defects on the un-split baseline"
     assert report.convention == "ours"
 
 
