@@ -25,15 +25,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dieline_core.scoring import normalize_scoring_flute
+from dieline_core.scoring import SLOT_WIDTH_IN, normalize_scoring_flute
 
 DEFAULT_SNAP_TOL = 1e-4
 DEFAULT_NEAR_TOL = 1e-3
 
-# First-pass values from skills/dieline/references/tab-and-slot-conventions.md
-# -- read from that file, never re-derived here. Flags mismatches only when
-# the caller declares --flute; without it, slot widths are informational.
-SLOT_WIDTH_IN: dict[str, float] = {"B": 0.25, "C": 0.25, "DW": 0.5}
+# SLOT_WIDTH_IN (first-pass values from tab-and-slot-conventions.md) is
+# imported from dieline_core.scoring -- the same table dieline_core.geometry
+# uses when generating table-driven styles, so validation and generation can
+# never silently drift apart. Flags mismatches only when the caller declares
+# --flute; without it, slot widths are informational.
 SLOT_WIDTH_TOLERANCE_IN = 0.02
 
 # Heuristic ceiling for "this short edge is plausibly a slot floor, not a main

@@ -20,6 +20,15 @@ DEFAULT_TAB_WIDTH_IN = Fraction(3, 2)  # 1½″ shop standard (Stitch/Glue Insid
 GLUE_TAB_IN = DEFAULT_TAB_WIDTH_IN  # alias for existing imports
 DEFAULT_JOINT: str = "glued"
 
+# Slot width and glue-tab free-edge inset, first-pass calibration from a real
+# ArtiosCAD exemplar export -- see
+# skills/dieline/references/tab-and-slot-conventions.md and
+# artios-dxf-conventions.md for the underlying analysis. Pending owner
+# confirmation like everything else in that file; shared by dieline_core
+# (generation) and dieline_core.validate (R8) so there is one source.
+SLOT_WIDTH_IN: dict[str, float] = {"B": 0.25, "C": 0.25, "DW": 0.5}
+TAB_FREE_EDGE_INSET_IN = Fraction(1, 4)  # 0.25" taper inset at each end of the tab's free edge
+
 @dataclass(frozen=True)
 class RscTapedAllowances:
     """Per-panel adders for RSC (0201) taped joint, in inches.

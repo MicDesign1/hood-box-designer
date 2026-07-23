@@ -26,6 +26,8 @@ import svgwrite
 from dieline_core.scoring import (
     DEFAULT_JOINT,
     RSC_0201_SCORING_FLUTES,
+    SLOT_WIDTH_IN,
+    TAB_FREE_EDGE_INSET_IN,
     fraction_to_unit,
     glue_tab_for_joint,
     hsc_0200_taped_allowances,
@@ -387,11 +389,6 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     else:
         glue = glue_tab if math.isfinite(glue_tab) and glue_tab > 0 else (1.25 if unit == "in" else 32.0)
     overlap_val = overlap if math.isfinite(overlap) and overlap > 0 else (1.375 if unit == "in" else 35.0)
-    slot = (
-        slot_in
-        if math.isfinite(slot_in) and slot_in > 0
-        else max(float(unit_values["slotMin"]), 2 * (caliper if math.isfinite(caliper) else 0.0))
-    )
 
     warnings: list[str] = []
     if not (length > 0 and width > 0 and height > 0):
@@ -408,6 +405,19 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
 
     if warnings:
         return DielineResult(ok=False, warnings=warnings, unit=unit)
+
+    # Slot width: table-driven styles use the per-flute shop value from
+    # tab-and-slot-conventions.md (verified against the ArtiosCAD exemplar)
+    # once the scoring flute is known; legacy caliper-based styles keep their
+    # existing formula unchanged -- out of scope for this convention table.
+    table_slot = SLOT_WIDTH_IN.get(scoring_flute) if fefco_code in TABLE_DRIVEN_FEFCO else None
+    slot = (
+        slot_in
+        if math.isfinite(slot_in) and slot_in > 0
+        else table_slot
+        if table_slot is not None
+        else max(float(unit_values["slotMin"]), 2 * (caliper if math.isfinite(caliper) else 0.0))
+    )
 
     fillet_radius_raw = payload.get("fillet_radius")
     if fillet_radius_raw is None:
@@ -493,6 +503,30 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     chamfer = min(float(unit_values["chamferMax"]), body_height / 4)
     half_slot = slot / 2
 
+    # Glue-tab taper + joint-end half-slot notch (Phase 3 of the
+    # dieline-validate initiative): only for table-driven styles with a real
+    # glue tab -- legacy caliper-based styles (0200/0202/0203/0713) keep their
+    # existing chamfer/plain-wall treatment unchanged, out of scope here.
+    tab_geometry_active = fefco_code in TABLE_DRIVEN_FEFCO and glue > 0
+    tab_free_edge_inset = float(TAB_FREE_EDGE_INSET_IN) if tab_geometry_active else chamfer
+    # Flap 0's own wall sits half_slot right of the fold when there's a real
+    # tab (joint-end notch, see the left-edge block below) -- every place
+    # that used to anchor flap 0's top/bottom edge at x0 directly must anchor
+    # here instead, or the top/bottom edge loops won't connect to it.
+    flap0_edge_x = x0 + half_slot if tab_geometry_active else x0
+    if tab_geometry_active:
+        # TODO(first-pass): inward one-caliper offset for the tab's glue
+        # surface (tab-and-slot-conventions.md) is NOT implemented -- it is
+        # not visible in the ArtiosCAD exemplar's 2D blank geometry (only the
+        # fold crease, free-edge taper, and joint-end notch are), so it is
+        # left unimplemented per "implement exemplar-visible geometry only;
+        # do not guess silently" rather than inventing a placement. Caliper
+        # values are in dieline_core.flutes if this needs to be added later.
+        warnings.append(
+            "Glue tab inward one-caliper offset not yet implemented (first pass) -- "
+            "see skills/dieline/references/tab-and-slot-conventions.md."
+        )
+
     cuts: list[LineSegment | ArcSegment] = []
     creases: list[LineSegment] = []
     labels: list[LabelMark] = []
@@ -500,7 +534,7 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
     # Top edge + slot notches, root corners filleted where the slot wall
     # meets the flap-top crease (the stress point during erection).
     if flap_top > 0:
-        cursor_x = x0
+        cursor_x = flap0_edge_x
         top_fillet_r = min(fillet_radius_cfg, half_slot * FILLET_CLAMP_MARGIN, flap_top * FILLET_CLAMP_MARGIN)
         if top_fillet_r > FILLET_MIN_RADIUS and top_fillet_r < fillet_radius_cfg - 1e-9:
             warnings.append(
@@ -605,17 +639,29 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
                 _seg(cuts, right_x, y_bottom, left_x, y_bottom)
                 _seg(cuts, left_x, y_bottom, left_x, total_h)
             cursor_x = left_x
-        _seg(cuts, cursor_x, total_h, x0, total_h)
+        _seg(cuts, cursor_x, total_h, flap0_edge_x, total_h)
     else:
         _seg(cuts, x_right, total_h, x0, total_h)
 
-    # Left edge + glue-tab chamfer
-    _seg(cuts, x0, y_bottom if is_crash_lock else total_h, x0, y_bottom)
-    _seg(cuts, x0, y_bottom, 0.0, y_bottom - chamfer)
-    _seg(cuts, 0.0, y_bottom - chamfer, 0.0, y_top + chamfer)
-    _seg(cuts, 0.0, y_top + chamfer, x0, y_top)
+    # Left edge + glue-tab taper. With a real table-driven tab, the fold
+    # corner also bridges to flap 0's own wall via a short joint-end
+    # half-slot notch (ArtiosCAD exemplar pattern) instead of running the
+    # flap wall straight down from the fold -- mirrors how internal slot
+    # boundaries are already trimmed by half_slot on each side.
+    if tab_geometry_active and flap_bottom > 0 and not is_crash_lock:
+        _seg(cuts, flap0_edge_x, total_h, flap0_edge_x, y_bottom)
+        _seg(cuts, flap0_edge_x, y_bottom, x0, y_bottom)
+    else:
+        _seg(cuts, x0, y_bottom if is_crash_lock else total_h, x0, y_bottom)
+    _seg(cuts, x0, y_bottom, 0.0, y_bottom - tab_free_edge_inset)
+    _seg(cuts, 0.0, y_bottom - tab_free_edge_inset, 0.0, y_top + tab_free_edge_inset)
+    _seg(cuts, 0.0, y_top + tab_free_edge_inset, x0, y_top)
     if flap_top > 0:
-        _seg(cuts, x0, y_top, x0, 0.0)
+        if tab_geometry_active:
+            _seg(cuts, x0, y_top, flap0_edge_x, y_top)
+            _seg(cuts, flap0_edge_x, y_top, flap0_edge_x, 0.0)
+        else:
+            _seg(cuts, x0, y_top, x0, 0.0)
 
     # Creases
     _cr(creases, x0, y_top, x0, y_bottom)
@@ -623,7 +669,8 @@ def build_dieline(spec: dict[str, Any]) -> DielineResult:
         _cr(creases, x_boundaries[index], y_top, x_boundaries[index], y_bottom)
 
     for index in range(4):
-        left = x_boundaries[index] + (0.0 if index == 0 else half_slot)
+        left_notch = half_slot if (index != 0 or tab_geometry_active) else 0.0
+        left = x_boundaries[index] + left_notch
         right = x_boundaries[index + 1] - (0.0 if index == 3 else half_slot)
         if flap_top > 0:
             _cr(creases, left, y_top, right, y_top)
